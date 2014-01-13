@@ -1,0 +1,5 @@
+./configure \
+ "--target-platform-posix=1" \
+ "--target-platform-macosx=1" \
+ "--us-enable-pcap=1" \
+"$@"
