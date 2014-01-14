@@ -36,6 +36,7 @@
 #include "us_allocator.h"
 #include "us_getopt.h"
 #include "us_print.h"
+#include "us_socket_collection.h"
 #include "jdksavdecc_pdu_print.h"
 #include "jdksavdecc_adp_print.h"
 #include "jdksavdecc_print.h"

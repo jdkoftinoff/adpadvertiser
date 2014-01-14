@@ -33,7 +33,6 @@
 
 
 
-
 void adpadvertiserd_incoming_raw_packet_handler(
     us_rawnet_multi_t *self,
     int ethernet_port,
@@ -82,18 +81,26 @@ void adpadvertiserd_incoming_udp_packet_handler(
 
 us_rawnet_multi_t rawnet;
 struct adpadvertiser advertiser;
+us_socket_collection_t udp_sockets;
+us_socket_collection_t rawnet_sockets;
+
 const char *port0_name = "en0";
 const char *port1_name = "en1";
 struct addrinfo *ipv4_multicast_addr;
 struct addrinfo *ipv4_listen_addr;
-int ipv4_socket0;
-int ipv4_socket1;
 struct addrinfo *ipv6_multicast_addr;
 struct addrinfo *ipv6_listen_addr;
-int ipv6_socket0;
-int ipv6_socket1;
+
+void adpadvertiserd_frame_send(
+    struct adpadvertiser *self,
+    void *context,
+    uint8_t const *buf,
+    uint16_t len ) {
 
 
+}
+
+#if 0
 void adpadvertiserd_frame_send(
     struct adpadvertiser *self,
     void *context,
@@ -119,83 +126,81 @@ void adpadvertiserd_frame_send(
         us_rawnet_multi_send_all(&rawnet, header, JDKSAVDECC_FRAME_HEADER_LEN, buf, len, 0, 0);
     }
 }
-
+#endif
 
 int main( int argc, const char **argv ) {
     us_rawnet_multi_open(&rawnet,JDKSAVDECC_AVTP_ETHERTYPE,jdksavdecc_multicast_adp_acmp.value, 0);
     // TODO: Parse args
 
     if( adpadvertiser_init(&advertiser,0,adpadvertiserd_frame_send) ) {
-
+        int i;
         memset(&advertiser.adpdu,0,sizeof(advertiser.adpdu));
         jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.header.entity_id, 0x70b3d5ffffedcf0);
         jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.entity_model_id, 0x70b3d5edc0000000);
         advertiser.adpdu.header.valid_time = 10; /* 20 seconds */
 
+        us_socket_collection_init(&udp_sockets);
+        us_socket_collection_init(&rawnet_sockets);
 
-        ipv4_listen_addr = us_net_get_addrinfo("0.0.0.0", "17221", SOCK_DGRAM, true );
-        ipv4_multicast_addr = us_net_get_addrinfo("224.0.0.251", "17221", SOCK_DGRAM, false );
-        ipv4_socket0 = us_net_create_multicast_rx_udp_socket(
-                                  ipv4_listen_addr,
-                                  ipv4_multicast_addr,
-                                  port0_name);
-        ipv4_socket1 = us_net_create_multicast_rx_udp_socket(
-                                  ipv4_listen_addr,
-                                  ipv4_multicast_addr,
-                                  port1_name);
+        us_socket_collection_add_multicast_udp(&udp_sockets, "0.0.0.0", "17221", "224.0.0.251", "17221", port0_name, 0 );
+        us_socket_collection_add_multicast_udp(&udp_sockets, "0::0", "17221", "ff02::fb", "17221", port0_name, 0 );
 
-        ipv6_listen_addr = us_net_get_addrinfo("0::0", "17221", SOCK_DGRAM, true );
-        ipv6_multicast_addr = us_net_get_addrinfo("ff02::fb", "17221", SOCK_DGRAM, false );
-        ipv6_socket0 = us_net_create_multicast_rx_udp_socket(
-                                  ipv6_listen_addr,
-                                  ipv6_multicast_addr,
-                                  port0_name);
-        ipv6_socket1 = us_net_create_multicast_rx_udp_socket(
-                                  ipv6_listen_addr,
-                                  ipv6_multicast_addr,
-                                  port1_name);
-
+        for( i=0; i<rawnet.ethernet_port_count; ++i ) {
+            us_socket_collection_add_rawnet(&rawnet_sockets, &rawnet.ethernet_ports[i]);
+        }
 
         while(true) {
-            time_t cur_time = time(0);
+            uint64_t cur_time;
+
             if( us_platform_sigint_seen || us_platform_sigterm_seen ) {
                 break;
             }
 
+            {
+                struct timeval tv;
+                us_gettimeofday(&tv);
+                cur_time = ((uint64_t)tv.tv_sec * 1000) + (tv.tv_usec / 1000);
+            }
+
             adpadvertiser_tick( &advertiser, (uint64_t)cur_time*1000 );
+
+            us_socket_collection_tick(&udp_sockets,cur_time);
+            us_socket_collection_tick(&rawnet_sockets,cur_time);
+            us_socket_collection_cleanup(&rawnet_sockets);
+            us_socket_collection_cleanup(&udp_sockets);
 
 #if defined(WIN32)
             Sleep(100);
 #else
             fd_set readable;
+            fd_set writable;
             int largest_fd=-1;
             int s;
             struct timeval tv;
             FD_ZERO(&readable);
             largest_fd=us_rawnet_multi_set_fdset(&rawnet, &readable);
 
-            if( ipv4_socket0!=-1 ) {
-                FD_SET(ipv4_socket0, &readable);
-                if( ipv4_socket0 > largest_fd ) largest_fd = ipv4_socket0;
-            }
-            if( ipv4_socket1!=-1) {
-                FD_SET(ipv4_socket1, &readable);
-                if( ipv4_socket1 > largest_fd ) largest_fd = ipv4_socket1;
-            }
-            if( ipv6_socket0!=-1) {
-                FD_SET(ipv6_socket0, &readable);
-                if( ipv6_socket0 > largest_fd ) largest_fd = ipv6_socket0;
-            }
-            if( ipv6_socket1!=-1 ) {
-                FD_SET(ipv6_socket1, &readable);
-                if( ipv6_socket1 > largest_fd ) largest_fd = ipv6_socket1;
-            }
+            largest_fd = us_socket_collection_fill_read_set(&udp_sockets, &readable, largest_fd );
+            largest_fd = us_socket_collection_fill_write_set(&udp_sockets, &writable, largest_fd );
+
+            largest_fd = us_socket_collection_fill_read_set(&rawnet_sockets, &readable, largest_fd );
+            largest_fd = us_socket_collection_fill_write_set(&rawnet_sockets, &writable, largest_fd );
 
             tv.tv_sec = 0;
             tv.tv_usec = 200000; // 200 ms
 
+            if( udp_sockets.do_early_tick ) {
+                tv.tv_usec = 0;
+                udp_sockets.do_early_tick = false;
+            }
+
+            if( rawnet_sockets.do_early_tick ) {
+                tv.tv_usec = 0;
+                rawnet_sockets.do_early_tick = false;
+            }
+
             do {
-                s=select(largest_fd+1, &readable, 0, 0, &tv );
+                s=select(largest_fd+1, &readable, &writable, 0, &tv );
             } while( s<0 && (errno==EINTR || errno==EAGAIN) );
 
             if( s<0 ) {
@@ -203,6 +208,8 @@ int main( int argc, const char **argv ) {
                 break;
             }
 #endif
+
+#if 0
             // poll even if select thinks there are no readable sockets
             us_rawnet_multi_rawnet_poll_incoming(
                 &rawnet,
@@ -210,28 +217,12 @@ int main( int argc, const char **argv ) {
                 128,
                 &advertiser,
                 adpadvertiserd_incoming_raw_packet_handler );
-            // handle any packets coming in from UDP
+#endif
 
-            if( ipv4_socket0!=-1 ) {
-                if( FD_ISSET(ipv4_socket0, &readable) ) {
-                    adpadvertiserd_incoming_udp_packet_handler(&advertiser,ipv4_socket0);
-                }
-            }
-            if( ipv4_socket1!=-1) {
-                if( FD_ISSET(ipv4_socket1, &readable) ) {
-                    adpadvertiserd_incoming_udp_packet_handler(&advertiser,ipv4_socket1);
-                }
-            }
-            if( ipv6_socket0!=-1) {
-                if( FD_ISSET(ipv6_socket0, &readable) ) {
-                    adpadvertiserd_incoming_udp_packet_handler(&advertiser,ipv6_socket0);
-                }
-            }
-            if( ipv6_socket1!=-1 ) {
-                if( FD_ISSET(ipv6_socket1, &readable) ) {
-                    adpadvertiserd_incoming_udp_packet_handler(&advertiser,ipv6_socket1);
-                }
-            }
+            us_socket_collection_handle_readable_set(&udp_sockets,&readable,cur_time);
+            us_socket_collection_handle_writable_set(&udp_sockets,&writable,cur_time);
+            us_socket_collection_handle_readable_set(&rawnet_sockets,&readable,cur_time);
+            us_socket_collection_handle_writable_set(&rawnet_sockets,&writable,cur_time);
 
         }
 
