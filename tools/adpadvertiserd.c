@@ -30,7 +30,7 @@
 */
 
 #include "adpadvertiserd.h"
-
+#include "us_daemon.h"
 
 us_rawnet_multi_t rawnet;
 struct adpadvertiser advertiser;
@@ -44,15 +44,40 @@ bool option_help=false;
 bool option_help_default=false;
 bool option_dump=false;
 bool option_dump_default=false;
-uint64_t option_entity_id=0xffffffffffffffffULL; // TODO: fill default from first mac address found
+bool option_daemon=false;
+bool option_daemon_default=false;
+uint16_t option_syslog=0;
+uint16_t option_syslog_default=0;
+uint16_t option_log_level=0;
+uint16_t option_log_level_default=US_LOG_LEVEL_INFO;
+uint16_t option_log_others=0;
+uint16_t option_log_others_default=0;
+uint64_t option_entity_id=0xffffffffffffffffULL;
 uint64_t option_entity_id_default=0xffffffffffffffffULL;
+uint64_t option_entity_model_id=0xffffffffffffffffULL;
+uint64_t option_entity_model_id_default=0xffffffffffffffffULL;
+uint64_t option_entity_capabilities = 0;
+uint64_t option_entity_capabilities_default = 0;
+uint16_t option_valid_time = 0;
+uint16_t option_valid_time_default = 10;
 
 us_malloc_allocator_t adpadvertiserd_allocator;
 us_getopt_t adpadvertiserd_options;
-us_getopt_option_t adpadvertiserd_option[] = {
+us_getopt_option_t adpadvertiserd_main_option[] = {
     {"dump","Dump settings to stdout", US_GETOPT_FLAG, &option_dump_default, &option_dump },
     {"help","Show help", US_GETOPT_FLAG, &option_help_default, &option_help },
-    {"entity_id","Set entity_id", US_GETOPT_HEX64, &option_entity_id_default, &option_entity_id },
+    {"loglevel", "Log Level 0-5", US_GETOPT_INT16, &option_log_level_default, &option_log_level },
+    {"daemon","daemonize", US_GETOPT_FLAG, &option_daemon_default, &option_daemon },
+//    {"syslog","send logging to syslog", US_GETOPT_UINT16, &option_syslog_default, &option_syslog },
+    {"log_others", "Log other entities available/departing messages", US_GETOPT_UINT16, &option_log_others_default, &option_log_others },
+    {0,0,US_GETOPT_NONE,0,0}
+};
+
+us_getopt_option_t adpadvertiserd_entity_option[] = {
+    {"id","entity_id", US_GETOPT_HEX64, &option_entity_id_default, &option_entity_id },
+    {"model_id","entity_model_id", US_GETOPT_HEX64, &option_entity_model_id_default, &option_entity_model_id },
+    {"capabilities","entity_capabilities", US_GETOPT_HEX32, &option_entity_capabilities_default, &option_entity_capabilities },
+    {"valid_time","valid_time in seconds", US_GETOPT_INT16, &option_valid_time_default, &option_valid_time },
     {0,0,US_GETOPT_NONE,0,0}
 };
 
@@ -70,7 +95,7 @@ void adpadvertiserd_message_readable(
     struct adpadvertiser *adv = (struct adpadvertiser *)self->user_context;
     if( len>0 ) {
         if( buf[0]==JDKSAVDECC_1722A_SUBTYPE_ADP ) {
-            us_log_debug("incoming ADP on socket %d, sa_family=%d", fd, (int)from_addr->sa_family );
+            //us_log_debug("incoming ADP on socket %d, sa_family=%d", fd, (int)from_addr->sa_family );
 
             adpadvertiser_receive(
                 adv,
@@ -192,61 +217,108 @@ void adpadvertiserd_initialize_sockets(
 }
 
 void adpadvertiserd_initialize_entity_info( struct jdksavdecc_adpdu *adpdu ) {
-    advertiser.adpdu.header.entity_id.value[0] = adpadvertiserd_first_mac_address[0];
-    advertiser.adpdu.header.entity_id.value[1] = adpadvertiserd_first_mac_address[1];
-    advertiser.adpdu.header.entity_id.value[2] = adpadvertiserd_first_mac_address[2];
-    advertiser.adpdu.header.entity_id.value[3] = 0xff;
-    advertiser.adpdu.header.entity_id.value[4] = 0xfe;
-    advertiser.adpdu.header.entity_id.value[5] = adpadvertiserd_first_mac_address[3];
-    advertiser.adpdu.header.entity_id.value[6] = adpadvertiserd_first_mac_address[4];
-    advertiser.adpdu.header.entity_id.value[7] = adpadvertiserd_first_mac_address[5];
-    jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.entity_model_id,  0x70b3d5edc0000000);
-    advertiser.adpdu.header.valid_time = 10; /* 20 seconds */
+
+    if( option_entity_id==0xffffffffffffffffULL ) {
+        adpdu->header.entity_id.value[0] = adpadvertiserd_first_mac_address[0];
+        adpdu->header.entity_id.value[1] = adpadvertiserd_first_mac_address[1];
+        adpdu->header.entity_id.value[2] = adpadvertiserd_first_mac_address[2];
+        adpdu->header.entity_id.value[3] = 0xff;
+        adpdu->header.entity_id.value[4] = 0xfe;
+        adpdu->header.entity_id.value[5] = adpadvertiserd_first_mac_address[3];
+        adpdu->header.entity_id.value[6] = adpadvertiserd_first_mac_address[4];
+        adpdu->header.entity_id.value[7] = adpadvertiserd_first_mac_address[5];
+    }
+    jdksavdecc_eui64_init_from_uint64(&adpdu->entity_model_id,  option_entity_model_id);
+    adpdu->entity_capabilities = option_entity_capabilities;
+
+    adpdu->header.valid_time = option_valid_time / 2;
 }
 
 void adpadvertiserd_receive_entity_available_or_departing(
     struct adpadvertiser *self,
     void *context,
     struct jdksavdecc_adpdu *adpdu ) {
-    const char *type = "Available";
-    if( adpdu->header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING ) {
-        type="Departing";
+    if( option_log_others ) {
+        const char *type = "Available";
+        if( adpdu->header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING ) {
+            type="Departing";
+        }
+        us_log_debug("Received %s index 0x%08lx for entity_id 0x%016llx",
+                  type,
+                  adpdu->available_index,
+                  jdksavdecc_eui64_convert_to_uint64(&adpdu->header.entity_id));
     }
-    us_log_debug("Received %s index 0x%08lx for entity_id 0x%016llx",
-              type,
-              adpdu->available_index,
-              jdksavdecc_eui64_convert_to_uint64(&adpdu->header.entity_id));
+}
+
+bool adpadvertiserd_process_options( const char **argv ) {
+    bool r=false;
+    us_malloc_allocator_t allocator;
+    us_getopt_t opt;
+    us_print_file_t p;
+    us_print_file_init(&p, stdout);
+
+    us_malloc_allocator_init( &allocator );
+
+    if( us_getopt_init( &opt, &allocator.m_base ) ) {
+        us_getopt_add_list( &opt, adpadvertiserd_main_option, 0, "adpadvertiserd main options" );
+        us_getopt_add_list( &opt, adpadvertiserd_entity_option, "adp", "ADP Entity Information"  );
+        us_getopt_fill_defaults( &opt );
+        if( us_getopt_parse_args( &opt, argv+1 ) ) {
+            r=true;
+        }
+
+        if( option_dump ) {
+            us_getopt_dump(&opt, &p.m_base, "dump" );
+            r=false;
+        }
+
+        if( option_help ) {
+            us_getopt_dump(&opt, &p.m_base, "help" );
+            r=false;
+        }
+
+        us_getopt_destroy(&opt);
+    }
+    return r;
 }
 
 int main( int argc, const char **argv ) {
-    // TODO: Parse args
     us_logger_stdio_start(stdout, stderr);
-    if( adpadvertiser_init(&advertiser,0,adpadvertiserd_frame_send) ) {
-        adpadvertiserd_initialize_sockets( &sockets );
-        advertiser.context = &sockets;
-        advertiser.received_entity_available_or_departing = adpadvertiserd_receive_entity_available_or_departing;
-        adpadvertiserd_initialize_entity_info(&advertiser.adpdu);
-        adpadvertiser_send_entity_discover(&advertiser);
-        while(us_socket_collection_group_count_sockets(&sockets)>0) {
-            uint64_t cur_time = us_time_in_milliseconds();
 
-            if( us_platform_sigint_seen || us_platform_sigterm_seen ) {
-                break;
+    if( adpadvertiserd_process_options(argv) ) {
+
+#if defined(TARGET_PLATFORM_POSIX)
+        us_daemon_daemonize(option_daemon, "adpadvertiserd", 0, 0, 0);
+#endif
+        if( adpadvertiser_init(&advertiser,0,adpadvertiserd_frame_send) ) {
+
+            adpadvertiserd_initialize_sockets( &sockets );
+            advertiser.context = &sockets;
+            advertiser.received_entity_available_or_departing = adpadvertiserd_receive_entity_available_or_departing;
+            adpadvertiserd_initialize_entity_info(&advertiser.adpdu);
+            adpadvertiser_send_entity_discover(&advertiser);
+
+            while(us_socket_collection_group_count_sockets(&sockets)>0) {
+                uint64_t cur_time = us_time_in_milliseconds();
+
+                if( us_platform_sigint_seen || us_platform_sigterm_seen ) {
+                    break;
+                }
+
+                adpadvertiser_tick( &advertiser, (uint64_t)cur_time );
+                us_socket_collection_group_tick(&sockets,cur_time);
+
+                if( !us_socket_collections_group_select(
+                        &sockets,
+                        cur_time,
+                        advertiser.early_tick ? 0 : 200) ) {
+                    break;
+                }
             }
 
-            adpadvertiser_tick( &advertiser, (uint64_t)cur_time );
-            us_socket_collection_group_tick(&sockets,cur_time);
-
-            if( !us_socket_collections_group_select(
-                    &sockets,
-                    cur_time,
-                    advertiser.early_tick ? 0 : 200) ) {
-                break;
-            }
+            adpadvertiser_destroy(&advertiser);
+            us_socket_collection_group_destroy(&sockets);
         }
-
-        adpadvertiser_destroy(&advertiser);
-        us_socket_collection_group_destroy(&sockets);
     }
     return 0;
 }

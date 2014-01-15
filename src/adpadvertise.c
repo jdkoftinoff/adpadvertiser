@@ -66,6 +66,7 @@ bool adpadvertiser_init(
 
 void adpadvertiser_destroy(
     struct adpadvertiser *self ) {
+    (void)self;
 }
 
 bool adpadvertiser_receive(
@@ -75,6 +76,7 @@ bool adpadvertiser_receive(
     uint16_t len ) {
     struct jdksavdecc_adpdu incoming;
     bool r=false;
+    (void)time_in_milliseconds;
     if( jdksavdecc_adpdu_read(&incoming, buf, 0, len)>0 ) {
         r=true;
         switch(incoming.header.message_type) {
@@ -102,12 +104,19 @@ bool adpadvertiser_receive(
     return r;
 }
 
-
 void adpadvertiser_tick(
     struct adpadvertiser *self,
     uint64_t cur_time_in_ms ) {
-    uint64_t next_time_in_ms = self->last_time_in_ms + (self->adpdu.header.valid_time*1000)/2;
-    if( (cur_time_in_ms > next_time_in_ms) || (self->early_tick && self->do_send_entity_available) ) {
+    uint64_t difftime = cur_time_in_ms - self->last_time_in_ms;
+    uint64_t valid_time_in_ms = self->adpdu.header.valid_time;
+
+    valid_time_in_ms = (valid_time_in_ms*1000) / 2;
+    if( valid_time_in_ms <1000 ) {
+        valid_time_in_ms = 1000;
+    }
+
+    if( ( difftime > valid_time_in_ms )
+        || (self->early_tick && self->do_send_entity_available) ) {
         self->early_tick = false;
         self->last_time_in_ms = cur_time_in_ms;
         adpadvertiser_send_entity_available(self);
