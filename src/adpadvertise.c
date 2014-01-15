@@ -50,6 +50,7 @@ bool adpadvertiser_init(
     self->do_send_entity_available = true;
     self->context = context;
     self->frame_send = frame_send;
+    self->received_entity_available_or_departing = 0;
 
     memset(&self->adpdu, 0, sizeof(self->adpdu));
     self->adpdu.header.cd = 1;
@@ -58,6 +59,7 @@ bool adpadvertiser_init(
     self->adpdu.header.sv = 0;
     self->adpdu.header.message_type = JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_AVAILABLE;
     self->adpdu.header.valid_time = 10;
+    self->adpdu.header.control_data_length = JDKSAVDECC_ADPDU_LEN - JDKSAVDECC_COMMON_CONTROL_HEADER_LEN;
 
     return true;
 }
@@ -75,12 +77,27 @@ bool adpadvertiser_receive(
     bool r=false;
     if( jdksavdecc_adpdu_read(&incoming, buf, 0, len)>0 ) {
         r=true;
-        if( incoming.header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DISCOVER ) {
-            fprintf(stdout,"Discover Received\n");
-        } else if( incoming.header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_AVAILABLE ) {
-            fprintf(stdout,"Available Received\n");
+        switch(incoming.header.message_type) {
+        case JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DISCOVER:
+            if( jdksavdecc_eui64_compare(&incoming.header.entity_id, &self->adpdu.header.entity_id )
+                || jdksavdecc_eui64_convert_to_uint64(&incoming.header.entity_id)==0 ) {
+                self->do_send_entity_available = true;
+                self->early_tick = true;
+            }
+            break;
+        case JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_AVAILABLE:
+            if( self->received_entity_available_or_departing ) {
+                self->received_entity_available_or_departing( self, self->context, &incoming );
+            }
+            break;
+        case JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING:
+            if( self->received_entity_available_or_departing ) {
+                self->received_entity_available_or_departing( self, self->context, &incoming );
+            }
+            break;
+        default:
+            break;
         }
-
     }
     return r;
 }
@@ -101,11 +118,50 @@ void adpadvertiser_tick(
 
 void adpadvertiser_send_entity_available( struct adpadvertiser *self ) {
     uint8_t buf[128];
-    ssize_t len = jdksavdecc_adpdu_write(&self->adpdu, buf, 0, sizeof(buf) );
+    ssize_t len;
+    self->adpdu.header.message_type = JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_AVAILABLE;
+    len = jdksavdecc_adpdu_write(&self->adpdu, buf, 0, sizeof(buf) );
 
     if( len>0 ) {
         self->frame_send( self, self->context, buf, (uint16_t)len );
         self->adpdu.available_index++;
     }
 }
+
+
+void adpadvertiser_send_entity_departing( struct adpadvertiser *self ) {
+    uint8_t buf[128];
+    ssize_t len;
+    self->adpdu.header.message_type = JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING;
+    len = jdksavdecc_adpdu_write(&self->adpdu, buf, 0, sizeof(buf) );
+
+    if( len>0 ) {
+        self->frame_send( self, self->context, buf, (uint16_t)len );
+        self->adpdu.available_index++;
+    }
+}
+
+void adpadvertiser_send_entity_discover( struct adpadvertiser *self ) {
+    uint8_t buf[128];
+    ssize_t len;
+    struct jdksavdecc_adpdu adpdu;
+    memset( &adpdu, 0, sizeof(adpdu) );
+    adpdu.header.cd = 1;
+    adpdu.header.subtype = JDKSAVDECC_SUBTYPE_ADP;
+    adpdu.header.control_data_length = JDKSAVDECC_ADPDU_LEN - JDKSAVDECC_COMMON_CONTROL_HEADER_LEN;
+    adpdu.header.message_type = JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DISCOVER;
+    adpdu.header.sv = 0;
+    adpdu.header.version = 0;
+    adpdu.header.valid_time = 0;
+    jdksavdecc_eui64_init_from_uint64(&adpdu.header.entity_id, 0 );
+
+    len = jdksavdecc_adpdu_write(&adpdu, buf, 0, sizeof(buf) );
+
+    if( len>0 ) {
+        self->frame_send( self, self->context, buf, (uint16_t)len );
+        self->adpdu.available_index++;
+    }
+}
+
+
 

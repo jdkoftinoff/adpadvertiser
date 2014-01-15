@@ -38,8 +38,23 @@ us_socket_collection_t udp_sockets;
 us_socket_collection_t rawnet_sockets;
 us_socket_collection_group_t sockets;
 
-const char *port0_name = "en0";
-const char *port1_name = "en5";
+uint8_t adpadvertiserd_first_mac_address[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
+
+bool option_help=false;
+bool option_help_default=false;
+bool option_dump=false;
+bool option_dump_default=false;
+uint64_t option_entity_id=0xffffffffffffffffULL; // TODO: fill default from first mac address found
+uint64_t option_entity_id_default=0xffffffffffffffffULL;
+
+us_malloc_allocator_t adpadvertiserd_allocator;
+us_getopt_t adpadvertiserd_options;
+us_getopt_option_t adpadvertiserd_option[] = {
+    {"dump","Dump settings to stdout", US_GETOPT_FLAG, &option_dump_default, &option_dump },
+    {"help","Show help", US_GETOPT_FLAG, &option_help_default, &option_help },
+    {"entity_id","Set entity_id", US_GETOPT_HEX64, &option_entity_id_default, &option_entity_id },
+    {0,0,US_GETOPT_NONE,0,0}
+};
 
 
 void adpadvertiserd_message_readable(
@@ -55,6 +70,8 @@ void adpadvertiserd_message_readable(
     struct adpadvertiser *adv = (struct adpadvertiser *)self->user_context;
     if( len>0 ) {
         if( buf[0]==JDKSAVDECC_1722A_SUBTYPE_ADP ) {
+            us_log_debug("incoming ADP on socket %d, sa_family=%d", fd, (int)from_addr->sa_family );
+
             adpadvertiser_receive(
                 adv,
                 current_time_in_milliseconds,
@@ -79,55 +96,83 @@ void adpadvertiserd_frame_send(
             int fd = c->socket_fd[j];
             void *socket_context = c->socket_context[j];
             if( fd!=-1 && c->send_data!=0) {
-                ssize_t sent = c->send_data( c, socket_context, fd, 0, 0, buf, len );
-                if( sent<0 ) {
-                    fprintf(stdout, "errno = %d (%s)\n", errno, strerror(errno) );
-                }
-                fprintf( stdout, "Sent %d to fd %d\n", (int)sent, fd );
+                c->send_data( c, socket_context, fd, 0, 0, buf, len );
             }
         }
     }
 }
 
 
-void adpadvertiserd_initialize_sockets_on_port(
-    us_socket_collection_group_t *self,
-    const char *port_name ) {
+void adpadvertiserd_initialize_udp_sockets_on_port(
+    us_socket_collection_t *self,
+    const char *port_name,
+    struct sockaddr *addr ) {
 
-   if( port_name && *port_name) {
-        us_socket_collection_add_multicast_udp(
-            &udp_sockets,
-            UNASSIGNED_IPV4, AVDECC_UDP_PORT,       // The address and port to listen on
-            MDNS_MULTICAST_IPV4, AVDECC_UDP_PORT,   // The multicast group to join
-            port_name,                              // the ethernet device to use
-            us_net_get_addrinfo(MDNS_MULTICAST_IPV4, AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
-            );
-
-        us_socket_collection_add_multicast_udp(
-            &udp_sockets,
-            UNASSIGNED_IPV6, AVDECC_UDP_PORT,       // The address and port to listen on
-            MDNS_MULTICAST_IPV6, AVDECC_UDP_PORT,   // The multicast group to join
-            port_name,                              // the ethernet device to use
-            us_net_get_addrinfo(MDNS_MULTICAST_IPV6, AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
-            );
+    const char *multicast_addr = MDNS_MULTICAST_IPV4;
+    const char *local_addr = "0";
+    if( addr->sa_family == AF_INET6 ) {
+        multicast_addr = MDNS_MULTICAST_IPV6;
+        local_addr = "0::0";
     }
 
+    us_socket_collection_add_multicast_udp(
+        self,
+        local_addr, AVDECC_UDP_PORT,       // The address and port to listen on
+        multicast_addr, AVDECC_UDP_PORT,   // The multicast group to join
+        port_name,                              // the ethernet device to use
+        us_net_get_addrinfo(multicast_addr, AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
+        );
 }
 
+bool adpadvertiserd_is_network_port_interesting( struct ifaddrs *port ) {
+    bool r=false;
+    if( port->ifa_name && *port->ifa_name &&
+        (port->ifa_addr->sa_family == AF_INET
+        || port->ifa_addr->sa_family == AF_INET6 ) ) {
+#if defined(__APPLE__)
+        if( port->ifa_name[0] =='e' && port->ifa_name[1] =='n' && isnumber(port->ifa_name[2]))
+#elif defined(__linux__)
+        if( port->ifa_name[0] =='e' && port->ifa_name[1] =='t' && port->ifa_name[2]=='h' && isnumber(port->ifa_name[3]) )
+#endif
+        {
+            r=true;
+        }
+    }
+    return r;
+}
+
+
+void adpadvertiserd_initialize_udp_sockets_on_all_ports(
+    us_socket_collection_t *self ) {
+    struct ifaddrs *addrs;
+
+    if( getifaddrs(&addrs)==0 ) {
+        struct ifaddrs *cur = addrs;
+        while( cur ) {
+            if( adpadvertiserd_is_network_port_interesting(cur) ) {
+                adpadvertiserd_initialize_udp_sockets_on_port(self,cur->ifa_name,cur->ifa_addr);
+            }
+            cur = cur->ifa_next;
+        }
+        freeifaddrs(addrs);
+    }
+}
+
+
 void adpadvertiserd_initialize_sockets(
-    us_socket_collection_group_t *self,
-    const char *port0_name,
-    const char *port1_name ) {
+    us_socket_collection_group_t *self ) {
     int i;
     us_socket_collection_init_udp_multicast(&udp_sockets);
     udp_sockets.readable = adpadvertiserd_message_readable;
     udp_sockets.user_context = &advertiser;
 
-    adpadvertiserd_initialize_sockets_on_port( &sockets, port0_name );
-    adpadvertiserd_initialize_sockets_on_port( &sockets, port1_name );
+    adpadvertiserd_initialize_udp_sockets_on_all_ports(&udp_sockets);
 
     // Create the rawnet sockets collection and add all the sockets that the rawnet_multi found for us.
     us_rawnet_multi_open(&rawnet,JDKSAVDECC_AVTP_ETHERTYPE,jdksavdecc_multicast_adp_acmp.value, 0);
+    if( rawnet.ethernet_port_count>0 ) {
+        memcpy( adpadvertiserd_first_mac_address, rawnet.ethernet_ports[0].m_my_mac, 6 );
+    }
 
     us_socket_collection_init_rawnet(&rawnet_sockets);
     rawnet_sockets.readable = adpadvertiserd_message_readable;
@@ -147,19 +192,41 @@ void adpadvertiserd_initialize_sockets(
 }
 
 void adpadvertiserd_initialize_entity_info( struct jdksavdecc_adpdu *adpdu ) {
-    jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.header.entity_id, 0x70b3d5ffffedcf00);
+    advertiser.adpdu.header.entity_id.value[0] = adpadvertiserd_first_mac_address[0];
+    advertiser.adpdu.header.entity_id.value[1] = adpadvertiserd_first_mac_address[1];
+    advertiser.adpdu.header.entity_id.value[2] = adpadvertiserd_first_mac_address[2];
+    advertiser.adpdu.header.entity_id.value[3] = 0xff;
+    advertiser.adpdu.header.entity_id.value[4] = 0xfe;
+    advertiser.adpdu.header.entity_id.value[5] = adpadvertiserd_first_mac_address[3];
+    advertiser.adpdu.header.entity_id.value[6] = adpadvertiserd_first_mac_address[4];
+    advertiser.adpdu.header.entity_id.value[7] = adpadvertiserd_first_mac_address[5];
     jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.entity_model_id,  0x70b3d5edc0000000);
     advertiser.adpdu.header.valid_time = 10; /* 20 seconds */
 }
 
+void adpadvertiserd_receive_entity_available_or_departing(
+    struct adpadvertiser *self,
+    void *context,
+    struct jdksavdecc_adpdu *adpdu ) {
+    const char *type = "Available";
+    if( adpdu->header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING ) {
+        type="Departing";
+    }
+    us_log_debug("Received %s index 0x%08lx for entity_id 0x%016llx",
+              type,
+              adpdu->available_index,
+              jdksavdecc_eui64_convert_to_uint64(&adpdu->header.entity_id));
+}
+
 int main( int argc, const char **argv ) {
     // TODO: Parse args
-
+    us_logger_stdio_start(stdout, stderr);
     if( adpadvertiser_init(&advertiser,0,adpadvertiserd_frame_send) ) {
-        adpadvertiserd_initialize_sockets( &sockets, port0_name, port1_name );
+        adpadvertiserd_initialize_sockets( &sockets );
         advertiser.context = &sockets;
+        advertiser.received_entity_available_or_departing = adpadvertiserd_receive_entity_available_or_departing;
         adpadvertiserd_initialize_entity_info(&advertiser.adpdu);
-
+        adpadvertiser_send_entity_discover(&advertiser);
         while(us_socket_collection_group_count_sockets(&sockets)>0) {
             uint64_t cur_time = us_time_in_milliseconds();
 

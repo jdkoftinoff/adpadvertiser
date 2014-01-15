@@ -35,6 +35,7 @@
 #include "us_rawnet_multi.h"
 #include "us_allocator.h"
 #include "us_getopt.h"
+#include "us_logger_stdio.h"
 #include "us_print.h"
 #include "us_time.h"
 #include "us_socket_collection.h"
@@ -71,9 +72,7 @@ void adpadvertiserd_initialize_sockets_on_port(
     const char *port_name );
 
 void adpadvertiserd_initialize_sockets(
-    us_socket_collection_group_t *self,
-    const char *port0_name,
-    const char *port1_name );
+    us_socket_collection_group_t *self );
 
 void adpadvertiserd_initialize_entity_info(
     struct jdksavdecc_adpdu *adpdu );
