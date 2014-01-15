@@ -36,8 +36,48 @@
 #include "us_allocator.h"
 #include "us_getopt.h"
 #include "us_print.h"
+#include "us_time.h"
 #include "us_socket_collection.h"
 #include "jdksavdecc_pdu_print.h"
 #include "jdksavdecc_adp_print.h"
 #include "jdksavdecc_print.h"
+
+#define UNASSIGNED_IPV4 "0.0.0.0"
+#define UNASSIGNED_IPV6 "0::0"
+#define AVDECC_UDP_PORT "17221"
+#define MDNS_MULTICAST_IPV4 "224.0.0.251"
+#define MDNS_MULTICAST_IPV6 "ff02::fb"
+
+void adpadvertiserd_message_readable(
+        struct us_socket_collection_s *self,
+        void * context,
+        int fd,
+        uint64_t current_time_in_milliseconds,
+        struct sockaddr const *from_addr,
+        socklen_t from_addrlen,
+        uint8_t const *buf,
+        ssize_t len );
+
+
+void adpadvertiserd_frame_send(
+    struct adpadvertiser *self,
+    void *context,
+    uint8_t const *buf,
+    uint16_t len );
+
+
+void adpadvertiserd_initialize_sockets_on_port(
+    us_socket_collection_group_t *self,
+    const char *port_name );
+
+void adpadvertiserd_initialize_sockets(
+    us_socket_collection_group_t *self,
+    const char *port0_name,
+    const char *port1_name );
+
+void adpadvertiserd_initialize_entity_info(
+    struct jdksavdecc_adpdu *adpdu );
+
+
+
 

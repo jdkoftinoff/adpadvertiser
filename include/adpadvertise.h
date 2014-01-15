@@ -53,7 +53,7 @@ void adpadvertiser_destroy(struct adpadvertiser *self );
 
 bool adpadvertiser_receive(
     struct adpadvertiser *self,
-    struct timeval const *tv,
+    uint64_t time_in_milliseconds,
     uint8_t const *buf,
     uint16_t len );
 

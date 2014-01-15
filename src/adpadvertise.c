@@ -50,6 +50,15 @@ bool adpadvertiser_init(
     self->do_send_entity_available = true;
     self->context = context;
     self->frame_send = frame_send;
+
+    memset(&self->adpdu, 0, sizeof(self->adpdu));
+    self->adpdu.header.cd = 1;
+    self->adpdu.header.subtype = JDKSAVDECC_SUBTYPE_ADP;
+    self->adpdu.header.version = 0;
+    self->adpdu.header.sv = 0;
+    self->adpdu.header.message_type = JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_AVAILABLE;
+    self->adpdu.header.valid_time = 10;
+
     return true;
 }
 
@@ -59,7 +68,7 @@ void adpadvertiser_destroy(
 
 bool adpadvertiser_receive(
     struct adpadvertiser *self,
-    struct timeval const *tv,
+    uint64_t time_in_milliseconds,
     uint8_t const *buf,
     uint16_t len ) {
     struct jdksavdecc_adpdu incoming;
@@ -67,8 +76,11 @@ bool adpadvertiser_receive(
     if( jdksavdecc_adpdu_read(&incoming, buf, 0, len)>0 ) {
         r=true;
         if( incoming.header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DISCOVER ) {
-
+            fprintf(stdout,"Discover Received\n");
+        } else if( incoming.header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_AVAILABLE ) {
+            fprintf(stdout,"Available Received\n");
         }
+
     }
     return r;
 }
@@ -81,10 +93,8 @@ void adpadvertiser_tick(
     if( (cur_time_in_ms > next_time_in_ms) || (self->early_tick && self->do_send_entity_available) ) {
         self->early_tick = false;
         self->last_time_in_ms = cur_time_in_ms;
-        if( self->do_send_entity_available ) {
-            adpadvertiser_send_entity_available(self);
-            self->do_send_entity_available = false;
-        }
+        adpadvertiser_send_entity_available(self);
+        self->do_send_entity_available = false;
     }
 }
 

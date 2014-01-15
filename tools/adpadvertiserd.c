@@ -32,202 +32,154 @@
 #include "adpadvertiserd.h"
 
 
-
-void adpadvertiserd_incoming_raw_packet_handler(
-    us_rawnet_multi_t *self,
-    int ethernet_port,
-    void *context,
-    uint8_t *buf,
-    uint16_t len ) {
-    struct timeval tv;
-    us_gettimeofday(&tv);
-    struct adpadvertiser *adv = (struct adpadvertiser *)context;
-    (void)ethernet_port;
-
-    if( buf[JDKSAVDECC_FRAME_HEADER_LEN+0]==JDKSAVDECC_1722A_SUBTYPE_ADP ) {
-        adpadvertiser_receive(
-            adv,
-            &tv,
-            buf+JDKSAVDECC_FRAME_HEADER_LEN,
-            len-JDKSAVDECC_FRAME_HEADER_LEN );
-    }
-}
-
-
-void adpadvertiserd_incoming_udp_packet_handler(
-    struct adpadvertiser *adv,
-    int fd) {
-    uint8_t buf[1500];
-    ssize_t len;
-    struct sockaddr_storage source_addr;
-    socklen_t source_addr_len = sizeof(struct sockaddr_storage);
-
-    struct timeval tv;
-    us_gettimeofday(&tv);
-
-    len = recvfrom(fd,buf,sizeof(buf),0,(struct sockaddr*)&source_addr,&source_addr_len);
-
-    if( len>0 ) {
-        if( buf[JDKSAVDECC_FRAME_HEADER_LEN+0]==JDKSAVDECC_1722A_SUBTYPE_ADP ) {
-            adpadvertiser_receive(
-                adv,
-                &tv,
-                buf,
-                len );
-        }
-    }
-}
-
-
 us_rawnet_multi_t rawnet;
 struct adpadvertiser advertiser;
 us_socket_collection_t udp_sockets;
 us_socket_collection_t rawnet_sockets;
+us_socket_collection_group_t sockets;
 
 const char *port0_name = "en0";
-const char *port1_name = "en1";
-struct addrinfo *ipv4_multicast_addr;
-struct addrinfo *ipv4_listen_addr;
-struct addrinfo *ipv6_multicast_addr;
-struct addrinfo *ipv6_listen_addr;
+const char *port1_name = "en5";
+
+
+void adpadvertiserd_message_readable(
+        struct us_socket_collection_s *self,
+        void * context,
+        int fd,
+        uint64_t current_time_in_milliseconds,
+        struct sockaddr const *from_addr,
+        socklen_t from_addrlen,
+        uint8_t const *buf,
+        ssize_t len ) {
+
+    struct adpadvertiser *adv = (struct adpadvertiser *)self->user_context;
+    if( len>0 ) {
+        if( buf[0]==JDKSAVDECC_1722A_SUBTYPE_ADP ) {
+            adpadvertiser_receive(
+                adv,
+                current_time_in_milliseconds,
+                buf,
+                len );
+        }
+    }
+
+}
 
 void adpadvertiserd_frame_send(
     struct adpadvertiser *self,
     void *context,
     uint8_t const *buf,
     uint16_t len ) {
+    int i;
+    us_socket_collection_group_t *g = (us_socket_collection_group_t *)&sockets;
+    for ( i=0; i<g->num_collections; ++i ) {
+        us_socket_collection_t *c = g->collection[i];
+        int j;
+        for (j=0; j<c->num_sockets; ++j ) {
+            int fd = c->socket_fd[j];
+            void *socket_context = c->socket_context[j];
+            if( fd!=-1 && c->send_data!=0) {
+                ssize_t sent = c->send_data( c, socket_context, fd, 0, 0, buf, len );
+                if( sent<0 ) {
+                    fprintf(stdout, "errno = %d (%s)\n", errno, strerror(errno) );
+                }
+                fprintf( stdout, "Sent %d to fd %d\n", (int)sent, fd );
+            }
+        }
+    }
+}
 
+
+void adpadvertiserd_initialize_sockets_on_port(
+    us_socket_collection_group_t *self,
+    const char *port_name ) {
+
+   if( port_name && *port_name) {
+        us_socket_collection_add_multicast_udp(
+            &udp_sockets,
+            UNASSIGNED_IPV4, AVDECC_UDP_PORT,       // The address and port to listen on
+            MDNS_MULTICAST_IPV4, AVDECC_UDP_PORT,   // The multicast group to join
+            port_name,                              // the ethernet device to use
+            us_net_get_addrinfo(MDNS_MULTICAST_IPV4, AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
+            );
+
+        us_socket_collection_add_multicast_udp(
+            &udp_sockets,
+            UNASSIGNED_IPV6, AVDECC_UDP_PORT,       // The address and port to listen on
+            MDNS_MULTICAST_IPV6, AVDECC_UDP_PORT,   // The multicast group to join
+            port_name,                              // the ethernet device to use
+            us_net_get_addrinfo(MDNS_MULTICAST_IPV6, AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
+            );
+    }
 
 }
 
-#if 0
-void adpadvertiserd_frame_send(
-    struct adpadvertiser *self,
-    void *context,
-    uint8_t const *buf,
-    uint16_t len )
-{
-    if( ipv4_socket0 != -1 ) {
-        sendto(ipv4_socket0, buf, len, 0, ipv4_multicast_addr->ai_addr, ipv4_multicast_addr->ai_addrlen );
+void adpadvertiserd_initialize_sockets(
+    us_socket_collection_group_t *self,
+    const char *port0_name,
+    const char *port1_name ) {
+    int i;
+    us_socket_collection_init_udp_multicast(&udp_sockets);
+    udp_sockets.readable = adpadvertiserd_message_readable;
+    udp_sockets.user_context = &advertiser;
+
+    adpadvertiserd_initialize_sockets_on_port( &sockets, port0_name );
+    adpadvertiserd_initialize_sockets_on_port( &sockets, port1_name );
+
+    // Create the rawnet sockets collection and add all the sockets that the rawnet_multi found for us.
+    us_rawnet_multi_open(&rawnet,JDKSAVDECC_AVTP_ETHERTYPE,jdksavdecc_multicast_adp_acmp.value, 0);
+
+    us_socket_collection_init_rawnet(&rawnet_sockets);
+    rawnet_sockets.readable = adpadvertiserd_message_readable;
+    rawnet_sockets.user_context = &advertiser;
+
+    for( i=0; i<rawnet.ethernet_port_count; ++i ) {
+        us_rawnet_context_t *c = &rawnet.ethernet_ports[i];
+        us_socket_collection_add_rawnet(
+            &rawnet_sockets,
+            c);
     }
-    if( ipv4_socket1 != -1 ) {
-        sendto(ipv4_socket1, buf, len, 0, ipv4_multicast_addr->ai_addr, ipv4_multicast_addr->ai_addrlen );
-    }
-    if( ipv6_socket0 != -1 ) {
-        sendto(ipv6_socket0, buf, len, 0, ipv6_multicast_addr->ai_addr, ipv6_multicast_addr->ai_addrlen );
-    }
-    if( ipv6_socket1 != -1 ) {
-        sendto(ipv6_socket1, buf, len, 0, ipv6_multicast_addr->ai_addr, ipv6_multicast_addr->ai_addrlen );
-    }
-    {
-        uint8_t header[JDKSAVDECC_FRAME_HEADER_LEN];
-        memcpy( &header[JDKSAVDECC_FRAME_HEADER_DA_OFFSET], jdksavdecc_multicast_adp_acmp.value, 6 );
-        jdksavdecc_uint16_set(JDKSAVDECC_AVTP_ETHERTYPE,header,JDKSAVDECC_FRAME_HEADER_ETHERTYPE_OFFSET );
-        us_rawnet_multi_send_all(&rawnet, header, JDKSAVDECC_FRAME_HEADER_LEN, buf, len, 0, 0);
-    }
+
+    // Create the socket collection group that encapsulates all the sockets
+    us_socket_collection_group_init(self);
+    us_socket_collection_group_add(self,&udp_sockets);
+    us_socket_collection_group_add(self,&rawnet_sockets);
 }
-#endif
+
+void adpadvertiserd_initialize_entity_info( struct jdksavdecc_adpdu *adpdu ) {
+    jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.header.entity_id, 0x70b3d5ffffedcf00);
+    jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.entity_model_id,  0x70b3d5edc0000000);
+    advertiser.adpdu.header.valid_time = 10; /* 20 seconds */
+}
 
 int main( int argc, const char **argv ) {
-    us_rawnet_multi_open(&rawnet,JDKSAVDECC_AVTP_ETHERTYPE,jdksavdecc_multicast_adp_acmp.value, 0);
     // TODO: Parse args
 
     if( adpadvertiser_init(&advertiser,0,adpadvertiserd_frame_send) ) {
-        int i;
-        memset(&advertiser.adpdu,0,sizeof(advertiser.adpdu));
-        jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.header.entity_id, 0x70b3d5ffffedcf0);
-        jdksavdecc_eui64_init_from_uint64(&advertiser.adpdu.entity_model_id, 0x70b3d5edc0000000);
-        advertiser.adpdu.header.valid_time = 10; /* 20 seconds */
+        adpadvertiserd_initialize_sockets( &sockets, port0_name, port1_name );
+        advertiser.context = &sockets;
+        adpadvertiserd_initialize_entity_info(&advertiser.adpdu);
 
-        us_socket_collection_init(&udp_sockets);
-        us_socket_collection_init(&rawnet_sockets);
-
-        us_socket_collection_add_multicast_udp(&udp_sockets, "0.0.0.0", "17221", "224.0.0.251", "17221", port0_name, 0 );
-        us_socket_collection_add_multicast_udp(&udp_sockets, "0::0", "17221", "ff02::fb", "17221", port0_name, 0 );
-
-        for( i=0; i<rawnet.ethernet_port_count; ++i ) {
-            us_socket_collection_add_rawnet(&rawnet_sockets, &rawnet.ethernet_ports[i]);
-        }
-
-        while(true) {
-            uint64_t cur_time;
+        while(us_socket_collection_group_count_sockets(&sockets)>0) {
+            uint64_t cur_time = us_time_in_milliseconds();
 
             if( us_platform_sigint_seen || us_platform_sigterm_seen ) {
                 break;
             }
 
-            {
-                struct timeval tv;
-                us_gettimeofday(&tv);
-                cur_time = ((uint64_t)tv.tv_sec * 1000) + (tv.tv_usec / 1000);
-            }
+            adpadvertiser_tick( &advertiser, (uint64_t)cur_time );
+            us_socket_collection_group_tick(&sockets,cur_time);
 
-            adpadvertiser_tick( &advertiser, (uint64_t)cur_time*1000 );
-
-            us_socket_collection_tick(&udp_sockets,cur_time);
-            us_socket_collection_tick(&rawnet_sockets,cur_time);
-            us_socket_collection_cleanup(&rawnet_sockets);
-            us_socket_collection_cleanup(&udp_sockets);
-
-#if defined(WIN32)
-            Sleep(100);
-#else
-            fd_set readable;
-            fd_set writable;
-            int largest_fd=-1;
-            int s;
-            struct timeval tv;
-            FD_ZERO(&readable);
-            largest_fd=us_rawnet_multi_set_fdset(&rawnet, &readable);
-
-            largest_fd = us_socket_collection_fill_read_set(&udp_sockets, &readable, largest_fd );
-            largest_fd = us_socket_collection_fill_write_set(&udp_sockets, &writable, largest_fd );
-
-            largest_fd = us_socket_collection_fill_read_set(&rawnet_sockets, &readable, largest_fd );
-            largest_fd = us_socket_collection_fill_write_set(&rawnet_sockets, &writable, largest_fd );
-
-            tv.tv_sec = 0;
-            tv.tv_usec = 200000; // 200 ms
-
-            if( udp_sockets.do_early_tick ) {
-                tv.tv_usec = 0;
-                udp_sockets.do_early_tick = false;
-            }
-
-            if( rawnet_sockets.do_early_tick ) {
-                tv.tv_usec = 0;
-                rawnet_sockets.do_early_tick = false;
-            }
-
-            do {
-                s=select(largest_fd+1, &readable, &writable, 0, &tv );
-            } while( s<0 && (errno==EINTR || errno==EAGAIN) );
-
-            if( s<0 ) {
-                us_log_error( "Unable to select" );
+            if( !us_socket_collections_group_select(
+                    &sockets,
+                    cur_time,
+                    advertiser.early_tick ? 0 : 200) ) {
                 break;
             }
-#endif
-
-#if 0
-            // poll even if select thinks there are no readable sockets
-            us_rawnet_multi_rawnet_poll_incoming(
-                &rawnet,
-                cur_time,
-                128,
-                &advertiser,
-                adpadvertiserd_incoming_raw_packet_handler );
-#endif
-
-            us_socket_collection_handle_readable_set(&udp_sockets,&readable,cur_time);
-            us_socket_collection_handle_writable_set(&udp_sockets,&writable,cur_time);
-            us_socket_collection_handle_readable_set(&rawnet_sockets,&readable,cur_time);
-            us_socket_collection_handle_writable_set(&rawnet_sockets,&writable,cur_time);
-
         }
 
-
         adpadvertiser_destroy(&advertiser);
+        us_socket_collection_group_destroy(&sockets);
     }
     return 0;
 }
