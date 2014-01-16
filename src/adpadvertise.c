@@ -40,6 +40,16 @@
 #include "jdksavdecc_util.h"
 
 
+/// Form the entity available message and send it
+static void adpadvertiser_send_entity_available( struct adpadvertiser *self );
+
+/// Form the entity departing message and send it
+static void adpadvertiser_send_entity_departing( struct adpadvertiser *self );
+
+/// Form the entity discover message and send it
+static void adpadvertiser_send_entity_discover( struct adpadvertiser *self );
+
+
 bool adpadvertiser_init(
     struct adpadvertiser *self,
     void *context,
@@ -56,9 +66,12 @@ bool adpadvertiser_init(
     self->last_time_in_ms = 0;
     self->early_tick = true;
     self->do_send_entity_available = true;
+    self->do_send_entity_departing = false;
+    self->do_send_entity_discover = false;
     self->context = context;
     self->frame_send = frame_send;
     self->received_entity_available_or_departing = received_entity_available_or_departing;
+    self->stopped = false;
 
     memset(&self->adpdu, 0, sizeof(self->adpdu));
     self->adpdu.header.cd = 1;
@@ -89,18 +102,24 @@ bool adpadvertiser_receive(
         r=true;
         switch(incoming.header.message_type) {
         case JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DISCOVER:
-            if( jdksavdecc_eui64_compare(&incoming.header.entity_id, &self->adpdu.header.entity_id )
-                || jdksavdecc_eui64_convert_to_uint64(&incoming.header.entity_id)==0 ) {
-                self->do_send_entity_available = true;
-                self->early_tick = true;
+            // only respond to discover messages if we are not stopped
+            if( !self->stopped ) {
+                // handle the case where the discover message references our entity id or 0
+                if( jdksavdecc_eui64_compare(&incoming.header.entity_id, &self->adpdu.header.entity_id )
+                    || jdksavdecc_eui64_convert_to_uint64(&incoming.header.entity_id)==0 ) {
+                    self->do_send_entity_available = true;
+                    self->early_tick = true;
+                }
             }
             break;
         case JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_AVAILABLE:
+            // only handle incoming available messages if we have a place to give them to
             if( self->received_entity_available_or_departing ) {
                 self->received_entity_available_or_departing( self, self->context, &incoming );
             }
             break;
         case JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING:
+            // only handle incoming departing messages if we have a place to give them to
             if( self->received_entity_available_or_departing ) {
                 self->received_entity_available_or_departing( self, self->context, &incoming );
             }
@@ -115,25 +134,106 @@ bool adpadvertiser_receive(
 void adpadvertiser_tick(
     struct adpadvertiser *self,
     uint64_t cur_time_in_ms ) {
+
+    // calculate the time since the last send
     uint64_t difftime = cur_time_in_ms - self->last_time_in_ms;
+
     uint64_t valid_time_in_ms = self->adpdu.header.valid_time;
 
+    // calculate the time in milliseconds between sends.
+    // header.valid_time is in 2 second increments. We are to send
+    // 4 available messages per valid_time.
     valid_time_in_ms = (valid_time_in_ms*1000) / 2;
+
+    // limit it to be at most one send per second
     if( valid_time_in_ms <1000 ) {
         valid_time_in_ms = 1000;
     }
 
-    if( ( difftime > valid_time_in_ms )
-        || (self->early_tick && self->do_send_entity_available) ) {
-        self->early_tick = false;
-        self->last_time_in_ms = cur_time_in_ms;
-        adpadvertiser_send_entity_available(self);
-        self->do_send_entity_available = false;
+    // clear any early tick flag
+    self->early_tick = false;
+
+    // only send messages available/departing messages if we are not stopped
+    
+    if( !self->stopped ) {
+        if( ( difftime > valid_time_in_ms )
+            || (self->do_send_entity_available || self->do_send_entity_departing) ) {
+
+            // are we departing?
+            if( self->do_send_entity_departing ) {
+
+                // yes, we are sending an entity departing message.
+                // clear any do_send flags
+
+                self->do_send_entity_departing = false;
+                self->do_send_entity_available = false;
+
+                // change into pause state
+
+                self->stopped = true;
+
+                // record the time we send it
+
+                self->last_time_in_ms = cur_time_in_ms;
+
+                // send the departing
+
+                adpadvertiser_send_entity_departing(self);
+
+                // reset the available_index to 0
+
+                self->adpdu.available_index = 0;
+            } else if( self->do_send_entity_available ) {
+
+                // we are to send entity available message
+                // clear the request flag
+
+                self->do_send_entity_available = false;
+
+                // record the time we send it
+
+                self->last_time_in_ms = cur_time_in_ms;
+
+                // send the available
+
+                adpadvertiser_send_entity_available(self);
+            }
+        }
+    }
+
+    // are we asked to send an entity discover message?
+
+    if( self->do_send_entity_discover ) {
+
+        // yes, clear the flag and send it
+
+        self->do_send_entity_discover = false;
+        adpadvertiser_send_entity_discover(self);
     }
 }
 
+void adpadvertiser_trigger_send_discover(
+    struct adpadvertiser *self ) {
 
-void adpadvertiser_send_entity_available( struct adpadvertiser *self ) {
+    self->early_tick = true;
+    self->do_send_entity_discover = true;
+}
+
+void adpadvertiser_trigger_send_available(
+    struct adpadvertiser *self ) {
+    self->early_tick = true;
+    self->do_send_entity_available = true;
+    self->stopped = false;
+}
+
+void adpadvertiser_trigger_send_departing(
+    struct adpadvertiser *self ) {
+    self->early_tick = true;
+    self->do_send_entity_departing = true;
+}
+
+
+static void adpadvertiser_send_entity_available( struct adpadvertiser *self ) {
     uint8_t buf[128];
     ssize_t len;
     self->adpdu.header.message_type = JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_AVAILABLE;
@@ -146,7 +246,7 @@ void adpadvertiser_send_entity_available( struct adpadvertiser *self ) {
 }
 
 
-void adpadvertiser_send_entity_departing( struct adpadvertiser *self ) {
+static void adpadvertiser_send_entity_departing( struct adpadvertiser *self ) {
     uint8_t buf[128];
     ssize_t len;
     self->adpdu.header.message_type = JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING;
@@ -158,7 +258,7 @@ void adpadvertiser_send_entity_departing( struct adpadvertiser *self ) {
     }
 }
 
-void adpadvertiser_send_entity_discover( struct adpadvertiser *self ) {
+static void adpadvertiser_send_entity_discover( struct adpadvertiser *self ) {
     uint8_t buf[128];
     ssize_t len;
     struct jdksavdecc_adpdu adpdu;

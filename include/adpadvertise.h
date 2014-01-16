@@ -54,8 +54,17 @@ struct adpadvertiser {
     /// A flag to notify higher level code that the state machine is requesting an immediate tick again
     bool early_tick;
 
-    /// A flag used internally to the state machine to trigger the sending of an entity available message immediately
+    /// A flag used to notify the state machine to trigger the sending of a discover message immediately
+    bool do_send_entity_discover;
+    
+    /// A flag used to notify the state machine to trigger the sending of an entity available message immediately
     bool do_send_entity_available;
+
+    /// A flag used to notify the state machine to send departing message instead of available
+    bool do_send_entity_departing;
+
+    /// A flag used to notify the state machine to pause sending any messages
+    bool stopped;
 
     /// The context that the adp advertiser is used in.
     void *context;
@@ -91,21 +100,45 @@ bool adpadvertiser_init(
         struct jdksavdecc_adpdu *adpdu )
     );
 
+/// Destroy any resources that the adpadvertiser uses
 void adpadvertiser_destroy(struct adpadvertiser *self );
 
+/// Receive an ADPU and process it
 bool adpadvertiser_receive(
     struct adpadvertiser *self,
     uint64_t time_in_milliseconds,
     uint8_t const *buf,
     uint16_t len );
 
+/// Notify the state machine that time has passed. Call asap if early_tick is true.
 void adpadvertiser_tick(
     struct adpadvertiser *self,
     uint64_t cur_time_in_ms );
 
-void adpadvertiser_send_entity_available( struct adpadvertiser *self );
+/// Tell the advertiser to stop advertising. Incoming messages will still be reported.
+static inline void adpadvertiser_stop(
+    struct adpadvertiser *self) {
+    self->stopped = true;
+}
 
-void adpadvertiser_send_entity_departing( struct adpadvertiser *self );
 
-void adpadvertiser_send_entity_discover( struct adpadvertiser *self );
+/// Request the state machine to send an entity discover message on the next tick.
+void adpadvertiser_trigger_send_discover(
+    struct adpadvertiser *self );
+
+/// Request the state machine to send an entity available message on the next tick.
+/// Starts the state machine if is was stopped.
+void adpadvertiser_trigger_send_available(
+    struct adpadvertiser *self );
+
+/// Request the state machine to send an entity departing message on the next tick and
+/// then transition to stopped mode and reset available_index to 0
+void adpadvertiser_trigger_send_departing(
+    struct adpadvertiser *self );
+
+/// Returns true if the state machine is stopped; i.e. the state machine sent the departing message
+static inline bool adpadvertiser_is_stopped( struct adpadvertiser *self ) {
+    return self->stopped;
+}
+
 
