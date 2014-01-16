@@ -72,6 +72,15 @@ uint64_t option_entity_capabilities = 0;
 uint64_t option_entity_capabilities_default = 0;
 uint16_t option_valid_time = 0;
 uint16_t option_valid_time_default = 10;
+uint16_t option_talker_stream_sources = 0;
+uint16_t option_talker_stream_sources_default = 0;
+uint16_t option_talker_capabilities = 0;
+uint16_t option_talker_capabilities_default = 0;
+uint16_t option_listener_stream_sinks = 0;
+uint16_t option_listener_stream_sinks_default = 0;
+uint16_t option_listener_capabilities = 0;
+uint16_t option_listener_capabilities_default = 0;
+
 
 
 us_getopt_option_t adpadvertiserd_main_option[] = {
@@ -95,7 +104,12 @@ us_getopt_option_t adpadvertiserd_entity_option[] = {
     {"entity_id","entity_id", US_GETOPT_HEX64, &option_entity_id_default, &option_entity_id },
     {"entity_model_id","entity_model_id", US_GETOPT_HEX64, &option_entity_model_id_default, &option_entity_model_id },
     {"entity_capabilities","entity_capabilities", US_GETOPT_HEX32, &option_entity_capabilities_default, &option_entity_capabilities },
-    {"valid_time","valid_time in seconds", US_GETOPT_INT16, &option_valid_time_default, &option_valid_time },
+    {"valid_time","valid_time in seconds", US_GETOPT_UINT16, &option_valid_time_default, &option_valid_time },
+    {"talker_capabilities","talker_capabilities", US_GETOPT_UINT16, &option_talker_capabilities_default, &option_talker_capabilities },
+    {"talker_stream_sources","talker_stream_sources", US_GETOPT_UINT16, &option_talker_stream_sources_default, &option_talker_stream_sources },
+    {"listener_capabilities","listener_capabilities", US_GETOPT_UINT16, &option_listener_capabilities_default, &option_listener_capabilities },
+    {"listener_stream_sinks","listener_stream_sinks", US_GETOPT_UINT16, &option_listener_stream_sinks_default, &option_listener_stream_sinks },
+
     {0,0,US_GETOPT_NONE,0,0}
 };
 
