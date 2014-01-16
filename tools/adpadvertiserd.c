@@ -292,6 +292,7 @@ void adpadvertiserd_receive_entity_available_or_departing(
 
         us_net_convert_sockaddr_to_string(
                 (struct sockaddr *)&adpadvertiserd_last_received_from_addr,
+                adpadvertiserd_last_received_from_addr_len,
                 hostbuf,
                 sizeof(hostbuf));
 
