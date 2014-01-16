@@ -53,12 +53,14 @@ uint16_t option_syslog_default=0;
 #endif
 uint16_t option_log_level=0;
 uint16_t option_log_level_default=US_LOG_LEVEL_INFO;
-uint16_t option_log_others=0;
-uint16_t option_log_others_default=0;
+uint16_t option_discover=0;
+uint16_t option_discover_default=0;
 uint16_t option_udp=0;
 uint16_t option_udp_default=0;
 uint16_t option_avtp=0;
 uint16_t option_avtp_default=1;
+uint16_t option_advertise=0;
+uint16_t option_advertise_default=1;
 uint64_t option_entity_id=0xffffffffffffffffULL;
 uint64_t option_entity_id_default=0xffffffffffffffffULL;
 uint64_t option_entity_model_id=0xffffffffffffffffULL;
@@ -79,16 +81,17 @@ us_getopt_option_t adpadvertiserd_main_option[] = {
 #if US_ENABLE_SYSLOG==1
     {"syslog","send logging to syslog", US_GETOPT_UINT16, &option_syslog_default, &option_syslog },
 #endif
-    {"udp","enable 1722.1 over UDP (IPv4 and IPv6)", US_GETOPT_UINT16, &option_udp_default, &option_udp },
+    {"udp","enable 1722.1 over UDP (IPv4 and IPv6 port 17221, mdns multicast groups)", US_GETOPT_UINT16, &option_udp_default, &option_udp },
     {"avtp","enable 1722.1 over AVTP (Ethertype 0x22f0)", US_GETOPT_UINT16, &option_avtp_default, &option_avtp },
-    {"log_others", "Log other entities available/departing messages", US_GETOPT_UINT16, &option_log_others_default, &option_log_others },
+    {"advertise","Advertise the entity", US_GETOPT_UINT16, &option_advertise_default, &option_advertise },
+    {"discover", "Discover Log other entity available/departing messages", US_GETOPT_UINT16, &option_discover_default, &option_discover },
     {0,0,US_GETOPT_NONE,0,0}
 };
 
 us_getopt_option_t adpadvertiserd_entity_option[] = {
-    {"id","entity_id", US_GETOPT_HEX64, &option_entity_id_default, &option_entity_id },
-    {"model_id","entity_model_id", US_GETOPT_HEX64, &option_entity_model_id_default, &option_entity_model_id },
-    {"capabilities","entity_capabilities", US_GETOPT_HEX32, &option_entity_capabilities_default, &option_entity_capabilities },
+    {"entity_id","entity_id", US_GETOPT_HEX64, &option_entity_id_default, &option_entity_id },
+    {"entity_model_id","entity_model_id", US_GETOPT_HEX64, &option_entity_model_id_default, &option_entity_model_id },
+    {"entity_capabilities","entity_capabilities", US_GETOPT_HEX32, &option_entity_capabilities_default, &option_entity_capabilities },
     {"valid_time","valid_time in seconds", US_GETOPT_INT16, &option_valid_time_default, &option_valid_time },
     {0,0,US_GETOPT_NONE,0,0}
 };
@@ -259,11 +262,13 @@ void adpadvertiserd_initialize_entity_info( struct jdksavdecc_adpdu *adpdu ) {
         adpdu->header.entity_id.value[5] = adpadvertiserd_first_mac_address[3];
         adpdu->header.entity_id.value[6] = adpadvertiserd_first_mac_address[4];
         adpdu->header.entity_id.value[7] = adpadvertiserd_first_mac_address[5];
+    } else {
+        jdksavdecc_eui64_init_from_uint64(&adpdu->header.entity_id,  option_entity_id);
     }
     jdksavdecc_eui64_init_from_uint64(&adpdu->entity_model_id,  option_entity_model_id);
     adpdu->entity_capabilities = option_entity_capabilities;
 
-    adpdu->header.valid_time = option_valid_time / 2;
+    adpdu->header.valid_time = option_valid_time / 2; // header.valid_time is in 2 second increments
 }
 
 void adpadvertiserd_receive_entity_available_or_departing(
@@ -273,7 +278,7 @@ void adpadvertiserd_receive_entity_available_or_departing(
 
     (void)self;
     (void)context;
-    if( option_log_others ) {
+    if( option_discover ) {
         const char *type = "Available";
         if( adpdu->header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING ) {
             type="Departing";
@@ -324,33 +329,58 @@ int main( int argc, const char **argv ) {
     (void)argc;
     us_logger_stdio_start(stdout, stderr);
 
+    // parse the options and config files
     if( adpadvertiserd_process_options(argv) ) {
 
 #if US_ENABLE_DAEMON==1
+        // daemonize if we need to
         us_daemon_daemonize(option_daemon, "adpadvertiserd", 0, 0, 0);
 #endif
+        // initialize the adp advertiser
         if( adpadvertiser_init(
                 &advertiser,
                 0,
                 adpadvertiserd_frame_send,
                 adpadvertiserd_receive_entity_available_or_departing) ) {
 
+            // initialize all socket collection group
             adpadvertiserd_initialize_sockets( &sockets );
-            advertiser.context = &sockets;
-            advertiser.received_entity_available_or_departing = adpadvertiserd_receive_entity_available_or_departing;
-            adpadvertiserd_initialize_entity_info(&advertiser.adpdu);
-            adpadvertiser_send_entity_discover(&advertiser);
 
+            // set the context for the advertiser to be the socket collection group
+            advertiser.context = &sockets;
+
+            // set up the ADP entity information that we are advertising
+            adpadvertiserd_initialize_entity_info(&advertiser.adpdu);
+
+            // if we are to log other entity messages, then trigger the send of a discover message to everyone
+            if( option_discover ) {
+                adpadvertiser_trigger_send_discover(&advertiser);
+            }
+
+            // if we are to not advertise our entity then stop the advertiser
+            if( !option_advertise ) {
+                adpadvertiser_stop( &advertiser );
+            }
+
+            // Loop while we have some sockets open to play with
             while(us_socket_collection_group_count_sockets(&sockets)>0) {
+
+                // get the current time
                 uint64_t cur_time = us_time_in_milliseconds();
 
+                // If we received a signal then stop
                 if( us_platform_sigint_seen || us_platform_sigterm_seen ) {
                     break;
                 }
 
+                // process the advertiser state machine
                 adpadvertiser_tick( &advertiser, (uint64_t)cur_time );
+
+                // process any socket tick functions
                 us_socket_collection_group_tick(&sockets,cur_time);
 
+                // run select on all the sockets, waiting for half a second for an event,
+                // or just poll immediately if the advertiser wants an early tick
                 if( !us_socket_collections_group_select(
                         &sockets,
                         cur_time,
@@ -359,7 +389,10 @@ int main( int argc, const char **argv ) {
                 }
             }
 
+            // destroy the advertiser
             adpadvertiser_destroy(&advertiser);
+
+            // close and destroy all the socket collections and contained sockets
             us_socket_collection_group_destroy(&sockets);
         }
     }
