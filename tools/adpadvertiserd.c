@@ -30,7 +30,6 @@
 */
 
 #include "adpadvertiserd.h"
-#include "us_daemon.h"
 
 us_rawnet_multi_t rawnet;
 struct adpadvertiser advertiser;
@@ -44,14 +43,22 @@ bool option_help=false;
 bool option_help_default=false;
 bool option_dump=false;
 bool option_dump_default=false;
-bool option_daemon=false;
-bool option_daemon_default=false;
+#if US_ENABLE_DAEMON==1
+uint16_t option_daemon=0;
+uint16_t option_daemon_default=0;
+#endif
+#if US_ENABLE_SYSLOG==1
 uint16_t option_syslog=0;
 uint16_t option_syslog_default=0;
+#endif
 uint16_t option_log_level=0;
 uint16_t option_log_level_default=US_LOG_LEVEL_INFO;
 uint16_t option_log_others=0;
 uint16_t option_log_others_default=0;
+uint16_t option_udp=0;
+uint16_t option_udp_default=0;
+uint16_t option_avtp=0;
+uint16_t option_avtp_default=1;
 uint64_t option_entity_id=0xffffffffffffffffULL;
 uint64_t option_entity_id_default=0xffffffffffffffffULL;
 uint64_t option_entity_model_id=0xffffffffffffffffULL;
@@ -61,14 +68,19 @@ uint64_t option_entity_capabilities_default = 0;
 uint16_t option_valid_time = 0;
 uint16_t option_valid_time_default = 10;
 
-us_malloc_allocator_t adpadvertiserd_allocator;
-us_getopt_t adpadvertiserd_options;
+
 us_getopt_option_t adpadvertiserd_main_option[] = {
     {"dump","Dump settings to stdout", US_GETOPT_FLAG, &option_dump_default, &option_dump },
     {"help","Show help", US_GETOPT_FLAG, &option_help_default, &option_help },
-    {"loglevel", "Log Level 0-5", US_GETOPT_INT16, &option_log_level_default, &option_log_level },
-    {"daemon","daemonize", US_GETOPT_FLAG, &option_daemon_default, &option_daemon },
-//    {"syslog","send logging to syslog", US_GETOPT_UINT16, &option_syslog_default, &option_syslog },
+    {"log_level", "Log Level 0-5", US_GETOPT_INT16, &option_log_level_default, &option_log_level },
+#if US_ENABLE_DAEMON==1
+    {"daemon","daemonize", US_GETOPT_UINT16, &option_daemon_default, &option_daemon },
+#endif
+#if US_ENABLE_SYSLOG==1
+    {"syslog","send logging to syslog", US_GETOPT_UINT16, &option_syslog_default, &option_syslog },
+#endif
+    {"udp","enable 1722.1 over UDP (IPv4 and IPv6)", US_GETOPT_UINT16, &option_udp_default, &option_udp },
+    {"avtp","enable 1722.1 over AVTP (Ethertype 0x22f0)", US_GETOPT_UINT16, &option_avtp_default, &option_avtp },
     {"log_others", "Log other entities available/departing messages", US_GETOPT_UINT16, &option_log_others_default, &option_log_others },
     {0,0,US_GETOPT_NONE,0,0}
 };
@@ -93,6 +105,11 @@ void adpadvertiserd_message_readable(
         ssize_t len ) {
 
     struct adpadvertiser *adv = (struct adpadvertiser *)self->user_context;
+    (void)context;
+    (void)fd;
+    (void)from_addr;
+    (void)from_addrlen;
+
     if( len>0 ) {
         if( buf[0]==JDKSAVDECC_1722A_SUBTYPE_ADP ) {
             //us_log_debug("incoming ADP on socket %d, sa_family=%d", fd, (int)from_addr->sa_family );
@@ -112,7 +129,11 @@ void adpadvertiserd_frame_send(
     void *context,
     uint8_t const *buf,
     uint16_t len ) {
+
     int i;
+    (void)self;
+    (void)context;
+
     us_socket_collection_group_t *g = (us_socket_collection_group_t *)&sockets;
     for ( i=0; i<g->num_collections; ++i ) {
         us_socket_collection_t *c = g->collection[i];
@@ -133,23 +154,24 @@ void adpadvertiserd_initialize_udp_sockets_on_port(
     const char *port_name,
     struct sockaddr *addr ) {
 
-    const char *multicast_addr = MDNS_MULTICAST_IPV4;
+    const char *multicast_addr = ADPADVERTISER_MDNS_MULTICAST_IPV4;
     const char *local_addr = "0";
     if( addr->sa_family == AF_INET6 ) {
-        multicast_addr = MDNS_MULTICAST_IPV6;
+        multicast_addr = ADPADVERTISER_MDNS_MULTICAST_IPV6;
         local_addr = "0::0";
     }
 
     us_socket_collection_add_multicast_udp(
         self,
-        local_addr, AVDECC_UDP_PORT,       // The address and port to listen on
-        multicast_addr, AVDECC_UDP_PORT,   // The multicast group to join
-        port_name,                              // the ethernet device to use
-        us_net_get_addrinfo(multicast_addr, AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
+        local_addr, ADPADVERTISER_AVDECC_UDP_PORT,       // The address and port to listen on
+        multicast_addr, ADPADVERTISER_AVDECC_UDP_PORT,   // The multicast group to join
+        port_name,                                       // the ethernet device to use
+        us_net_get_addrinfo(multicast_addr, ADPADVERTISER_AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
         );
 }
 
 bool adpadvertiserd_is_network_port_interesting( struct ifaddrs *port ) {
+
     bool r=false;
     if( port->ifa_name && *port->ifa_name &&
         (port->ifa_addr->sa_family == AF_INET
@@ -169,6 +191,7 @@ bool adpadvertiserd_is_network_port_interesting( struct ifaddrs *port ) {
 
 void adpadvertiserd_initialize_udp_sockets_on_all_ports(
     us_socket_collection_t *self ) {
+
     struct ifaddrs *addrs;
 
     if( getifaddrs(&addrs)==0 ) {
@@ -186,34 +209,40 @@ void adpadvertiserd_initialize_udp_sockets_on_all_ports(
 
 void adpadvertiserd_initialize_sockets(
     us_socket_collection_group_t *self ) {
+
     int i;
-    us_socket_collection_init_udp_multicast(&udp_sockets);
-    udp_sockets.readable = adpadvertiserd_message_readable;
-    udp_sockets.user_context = &advertiser;
-
-    adpadvertiserd_initialize_udp_sockets_on_all_ports(&udp_sockets);
-
-    // Create the rawnet sockets collection and add all the sockets that the rawnet_multi found for us.
-    us_rawnet_multi_open(&rawnet,JDKSAVDECC_AVTP_ETHERTYPE,jdksavdecc_multicast_adp_acmp.value, 0);
-    if( rawnet.ethernet_port_count>0 ) {
-        memcpy( adpadvertiserd_first_mac_address, rawnet.ethernet_ports[0].m_my_mac, 6 );
-    }
-
-    us_socket_collection_init_rawnet(&rawnet_sockets);
-    rawnet_sockets.readable = adpadvertiserd_message_readable;
-    rawnet_sockets.user_context = &advertiser;
-
-    for( i=0; i<rawnet.ethernet_port_count; ++i ) {
-        us_rawnet_context_t *c = &rawnet.ethernet_ports[i];
-        us_socket_collection_add_rawnet(
-            &rawnet_sockets,
-            c);
-    }
 
     // Create the socket collection group that encapsulates all the sockets
     us_socket_collection_group_init(self);
-    us_socket_collection_group_add(self,&udp_sockets);
-    us_socket_collection_group_add(self,&rawnet_sockets);
+
+    // create the udp sockets collection and add all the ethernet ports and ip protocols
+    if( option_udp ) {
+        us_socket_collection_init_udp_multicast(&udp_sockets);
+        udp_sockets.readable = adpadvertiserd_message_readable;
+        udp_sockets.user_context = &advertiser;
+        adpadvertiserd_initialize_udp_sockets_on_all_ports(&udp_sockets);
+        us_socket_collection_group_add(self,&udp_sockets);
+    }
+
+    // Create the rawnet sockets collection and add all the sockets that the rawnet_multi found for us.
+    if( option_avtp ) {
+        us_socket_collection_init_rawnet(&rawnet_sockets);
+        us_rawnet_multi_open(&rawnet,JDKSAVDECC_AVTP_ETHERTYPE,jdksavdecc_multicast_adp_acmp.value, 0);
+        if( rawnet.ethernet_port_count>0 ) {
+            memcpy( adpadvertiserd_first_mac_address, rawnet.ethernet_ports[0].m_my_mac, 6 );
+        }
+
+        rawnet_sockets.readable = adpadvertiserd_message_readable;
+        rawnet_sockets.user_context = &advertiser;
+
+        for( i=0; i<rawnet.ethernet_port_count; ++i ) {
+            us_rawnet_context_t *c = &rawnet.ethernet_ports[i];
+            us_socket_collection_add_rawnet(
+                &rawnet_sockets,
+                c);
+        }
+        us_socket_collection_group_add(self,&rawnet_sockets);
+    }
 }
 
 void adpadvertiserd_initialize_entity_info( struct jdksavdecc_adpdu *adpdu ) {
@@ -238,6 +267,9 @@ void adpadvertiserd_receive_entity_available_or_departing(
     struct adpadvertiser *self,
     void *context,
     struct jdksavdecc_adpdu *adpdu ) {
+
+    (void)self;
+    (void)context;
     if( option_log_others ) {
         const char *type = "Available";
         if( adpdu->header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING ) {
@@ -270,27 +302,36 @@ bool adpadvertiserd_process_options( const char **argv ) {
         if( option_dump ) {
             us_getopt_dump(&opt, &p.m_base, "dump" );
             r=false;
-        }
-
-        if( option_help ) {
+        } else if( option_help ) {
             us_getopt_dump(&opt, &p.m_base, "help" );
             r=false;
         }
+#if US_ENABLE_SYSLOG==1
+        if( option_syslog ) {
 
+        }
+#endif
         us_getopt_destroy(&opt);
     }
     return r;
 }
 
 int main( int argc, const char **argv ) {
+
+    (void)argc;
+
     us_logger_stdio_start(stdout, stderr);
 
     if( adpadvertiserd_process_options(argv) ) {
 
-#if defined(TARGET_PLATFORM_POSIX)
+#if US_ENABLE_DAEMON==1
         us_daemon_daemonize(option_daemon, "adpadvertiserd", 0, 0, 0);
 #endif
-        if( adpadvertiser_init(&advertiser,0,adpadvertiserd_frame_send) ) {
+        if( adpadvertiser_init(
+                &advertiser,
+                0,
+                adpadvertiserd_frame_send,
+                adpadvertiserd_receive_entity_available_or_departing) ) {
 
             adpadvertiserd_initialize_sockets( &sockets );
             advertiser.context = &sockets;
@@ -311,7 +352,7 @@ int main( int argc, const char **argv ) {
                 if( !us_socket_collections_group_select(
                         &sockets,
                         cur_time,
-                        advertiser.early_tick ? 0 : 200) ) {
+                        advertiser.early_tick ? 0 : 500) ) {
                     break;
                 }
             }

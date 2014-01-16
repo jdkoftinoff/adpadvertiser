@@ -39,15 +39,10 @@
 #include "us_print.h"
 #include "us_time.h"
 #include "us_socket_collection.h"
+#include "us_daemon.h"
 #include "jdksavdecc_pdu_print.h"
 #include "jdksavdecc_adp_print.h"
 #include "jdksavdecc_print.h"
-
-#define UNASSIGNED_IPV4 "0.0.0.0"
-#define UNASSIGNED_IPV6 "0::0"
-#define AVDECC_UDP_PORT "17221"
-#define MDNS_MULTICAST_IPV4 "224.0.0.251"
-#define MDNS_MULTICAST_IPV6 "ff02::fb"
 
 void adpadvertiserd_message_readable(
         struct us_socket_collection_s *self,
@@ -59,13 +54,21 @@ void adpadvertiserd_message_readable(
         uint8_t const *buf,
         ssize_t len );
 
-
 void adpadvertiserd_frame_send(
     struct adpadvertiser *self,
     void *context,
     uint8_t const *buf,
     uint16_t len );
 
+void adpadvertiserd_initialize_udp_sockets_on_port(
+    us_socket_collection_t *self,
+    const char *port_name,
+    struct sockaddr *addr );
+
+bool adpadvertiserd_is_network_port_interesting( struct ifaddrs *port );
+
+void adpadvertiserd_initialize_udp_sockets_on_all_ports(
+    us_socket_collection_t *self );
 
 void adpadvertiserd_initialize_sockets_on_port(
     us_socket_collection_group_t *self,
@@ -76,6 +79,16 @@ void adpadvertiserd_initialize_sockets(
 
 void adpadvertiserd_initialize_entity_info(
     struct jdksavdecc_adpdu *adpdu );
+
+void adpadvertiserd_receive_entity_available_or_departing(
+    struct adpadvertiser *self,
+    void *context,
+    struct jdksavdecc_adpdu *adpdu );
+    
+bool adpadvertiserd_process_options(
+    const char **argv );
+
+
 
 
 

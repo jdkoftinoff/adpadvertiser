@@ -34,20 +34,61 @@
 #include "jdksavdecc_world.h"
 #include "jdksavdecc_adp.h"
 
+#define ADPADVERTISER_UNASSIGNED_IPV4 "0.0.0.0"
+#define ADPADVERTISER_UNASSIGNED_IPV6 "0::0"
+#define ADPADVERTISER_AVDECC_UDP_PORT "17221"
+#define ADPADVERTISER_MDNS_MULTICAST_IPV4 "224.0.0.251"
+#define ADPADVERTISER_MDNS_MULTICAST_IPV6 "ff02::fb"
+
+
+/// adpadvertiser object manages scheduling and sending adp entity available messages
+/// and responding to adp entity discover messages.
 struct adpadvertiser {
+
+    /// The current ADPDU that is sent
     struct jdksavdecc_adpdu adpdu;
+
+    /// The system time in milliseconds that the last ADPDU was sent
     uint64_t last_time_in_ms;
+
+    /// A flag to notify higher level code that the state machine is requesting an immediate tick again
     bool early_tick;
+
+    /// A flag used internally to the state machine to trigger the sending of an entity available message immediately
     bool do_send_entity_available;
+
+    /// The context that the adp advertiser is used in.
     void *context;
-    void (*frame_send)( struct adpadvertiser *self, void *context, uint8_t const *buf, uint16_t len );
-    void (*received_entity_available_or_departing)( struct adpadvertiser *self, void *context, struct jdksavdecc_adpdu *adpdu );
+
+    /// The function that the adpadvertiser calls in order to send an ADPDU.
+    void (*frame_send)(
+        struct adpadvertiser *self,
+        void *context,
+        uint8_t const *buf,
+        uint16_t len );
+
+    /// The function that the adpadvertiser calls if it received an entity available or entity available
+    /// for some other entity on the network.  May be set to 0 if the user does not care.
+    void (*received_entity_available_or_departing)(
+        struct adpadvertiser *self,
+        void *context,
+        struct jdksavdecc_adpdu *adpdu );
 };
 
+/// Initialize an adpadvertiser with the specified context and frame_send function and
+/// received_entity_available_or_departing function
 bool adpadvertiser_init(
     struct adpadvertiser *self,
     void *context,
-    void (*frame_send)( struct adpadvertiser *self, void *context, uint8_t const *buf, uint16_t len )
+    void (*frame_send)(
+        struct adpadvertiser *self,
+        void *context,
+        uint8_t const *buf,
+        uint16_t len ),
+    void (*received_entity_available_or_departing)(
+        struct adpadvertiser *self,
+        void *context,
+        struct jdksavdecc_adpdu *adpdu )
     );
 
 void adpadvertiser_destroy(struct adpadvertiser *self );

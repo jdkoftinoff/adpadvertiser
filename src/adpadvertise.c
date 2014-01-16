@@ -43,14 +43,22 @@
 bool adpadvertiser_init(
     struct adpadvertiser *self,
     void *context,
-    void (*frame_send)( struct adpadvertiser *self, void *context, uint8_t const *buf, uint16_t len )
+    void (*frame_send)(
+        struct adpadvertiser *self,
+        void *context,
+        uint8_t const *buf,
+        uint16_t len ),
+    void (*received_entity_available_or_departing)(
+        struct adpadvertiser *self,
+        void *context,
+        struct jdksavdecc_adpdu *adpdu )
     ) {
     self->last_time_in_ms = 0;
     self->early_tick = true;
     self->do_send_entity_available = true;
     self->context = context;
     self->frame_send = frame_send;
-    self->received_entity_available_or_departing = 0;
+    self->received_entity_available_or_departing = received_entity_available_or_departing;
 
     memset(&self->adpdu, 0, sizeof(self->adpdu));
     self->adpdu.header.cd = 1;
