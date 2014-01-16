@@ -1,0 +1,6 @@
+[submodule "microsupport"]
+	path = microsupport
+	url = ../microsupport
+[submodule "jdksavdecc-c"]
+	path = jdksavdecc-c
+	url = ../jdksavdecc-c
