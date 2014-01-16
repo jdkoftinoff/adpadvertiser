@@ -138,6 +138,8 @@ void adpadvertiserd_message_readable(
             jdksavdecc_adp_manager_receive(
                 adv,
                 current_time_in_milliseconds,
+                from_addr,
+                (int)from_addrlen,
                 buf,
                 len );
         }
@@ -293,6 +295,8 @@ void adpadvertiserd_initialize_entity_info( struct jdksavdecc_adpdu *adpdu ) {
 void adpadvertiserd_receive_entity_available_or_departing(
     struct jdksavdecc_adp_manager *self,
     void *context,
+    void const *source_address,
+    int source_address_len,
     struct jdksavdecc_adpdu *adpdu ) {
 
     (void)self;
@@ -305,8 +309,8 @@ void adpadvertiserd_receive_entity_available_or_departing(
         }
 
         us_net_convert_sockaddr_to_string(
-                (struct sockaddr *)&adpadvertiserd_last_received_from_addr,
-                adpadvertiserd_last_received_from_addr_len,
+                (struct sockaddr const *)source_address,
+                (socklen_t)source_address_len,
                 hostbuf,
                 sizeof(hostbuf));
 
@@ -355,6 +359,7 @@ bool adpadvertiserd_process_options( const char **argv ) {
 
 int main( int argc, const char **argv ) {
 
+
     (void)argc;
     us_logger_stdio_start(stdout, stderr);
 
@@ -371,6 +376,8 @@ int main( int argc, const char **argv ) {
                 0,
                 adpadvertiserd_frame_send,
                 adpadvertiserd_receive_entity_available_or_departing) ) {
+
+            jdksavdecc_timestamp_in_milliseconds shutdown_started_time=0;
 
             // initialize all socket collection group
             adpadvertiserd_initialize_sockets( &sockets );
@@ -395,11 +402,13 @@ int main( int argc, const char **argv ) {
             while(us_socket_collection_group_count_sockets(&sockets)>0) {
 
                 // get the current time
-                uint64_t cur_time = us_time_in_milliseconds();
+                jdksavdecc_timestamp_in_milliseconds cur_time = us_time_in_milliseconds();
 
-                // If we received a signal then stop
+                // If we received a signal then depart now and quit in 1 second
                 if( us_platform_sigint_seen || us_platform_sigterm_seen ) {
-                    break;
+                    us_log_info("triggering adp depart");
+                    shutdown_started_time = cur_time;
+                    jdksavdecc_adp_manager_trigger_send_departing(&advertiser);
                 }
 
                 // process the advertiser state machine
@@ -415,6 +424,12 @@ int main( int argc, const char **argv ) {
                         cur_time,
                         advertiser.early_tick ? 0 : 500) ) {
                     break;
+                }
+
+                if( shutdown_started_time!=0 ) {
+                    if( cur_time - shutdown_started_time > 1*1000 ) {
+                        break;
+                    }
                 }
             }
 

@@ -90,6 +90,8 @@ void adpadvertiserd_initialize_entity_info(
 void adpadvertiserd_receive_entity_available_or_departing(
     struct jdksavdecc_adp_manager *self,
     void *context,
+    void const *source_address,
+    int source_address_len,
     struct jdksavdecc_adpdu *adpdu );
     
 bool adpadvertiserd_process_options(
