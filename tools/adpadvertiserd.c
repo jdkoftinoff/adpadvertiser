@@ -239,6 +239,9 @@ void adpadvertiserd_initialize_sockets(
 
     int i;
 
+    // initialize the sockets on this platform
+    us_platform_init_sockets();
+
     // Create the socket collection group that encapsulates all the sockets
     us_socket_collection_group_init(self);
 
