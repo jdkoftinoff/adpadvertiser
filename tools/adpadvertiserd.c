@@ -328,7 +328,7 @@ bool adpadvertiserd_process_options( const char **argv ) {
     us_malloc_allocator_init( &allocator );
 
     if( us_getopt_init( &opt, &allocator.m_base ) ) {
-        us_getopt_add_list( &opt, adpadvertiserd_main_option, 0, "adpadvertiserd main options" );
+        us_getopt_add_list( &opt, adpadvertiserd_main_option, 0, ADPADVERTISERD_IDENTITY " main options" );
         us_getopt_add_list( &opt, adpadvertiserd_entity_option, "adp", "ADP Entity Information"  );
         us_getopt_fill_defaults( &opt );
         if( us_getopt_parse_args( &opt, argv+1 ) ) {
@@ -344,7 +344,8 @@ bool adpadvertiserd_process_options( const char **argv ) {
         }
 #if US_ENABLE_SYSLOG==1
         if( option_syslog ) {
-
+            us_logger_syslog_start(ADPADVERTISERD_IDENTITY);
+            us_log_info("%s logging to syslog", ADPADVERTISERD_IDENTITY );
         }
 #endif
         us_getopt_destroy(&opt);
@@ -362,7 +363,7 @@ int main( int argc, const char **argv ) {
 
 #if US_ENABLE_DAEMON==1
         // daemonize if we need to
-        us_daemon_daemonize(option_daemon, "adpadvertiserd", 0, 0, 0);
+        us_daemon_daemonize(option_daemon, ADPADVERTISERD_IDENTITY, 0, 0, 0);
 #endif
         // initialize the adp advertiser
         if( jdksavdecc_adp_manager_init(

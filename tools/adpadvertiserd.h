@@ -40,9 +40,16 @@
 #include "us_time.h"
 #include "us_socket_collection.h"
 #include "us_daemon.h"
+#if US_ENABLE_SYSLOG==1
+#include "us_logger_syslog.h"
+#endif
 #include "jdksavdecc_pdu_print.h"
 #include "jdksavdecc_adp_print.h"
 #include "jdksavdecc_print.h"
+
+#ifndef ADPADVERTISERD_IDENTITY
+#define ADPADVERTISERD_IDENTITY "adpadvertiserd"
+#endif
 
 void adpadvertiserd_message_readable(
         struct us_socket_collection_s *self,
