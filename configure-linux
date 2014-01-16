@@ -1,0 +1,5 @@
+./configure \
+ "--target-platform-posix=1" \
+ "--target-platform-linux=1" \
+ "--us-enable-raw-ethernet=1" \
+"$@"
