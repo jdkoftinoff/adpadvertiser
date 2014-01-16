@@ -407,8 +407,9 @@ int main( int argc, const char **argv ) {
                 // get the current time
                 jdksavdecc_timestamp_in_milliseconds cur_time = us_time_in_milliseconds();
 
-                // If we received a signal then depart now and quit in 1 second
-                if( us_platform_sigint_seen || us_platform_sigterm_seen ) {
+                // If we received a signal then depart now and quit in 1 second, but
+                // only if we are not already shutting down
+                if( shutdown_started_time==0 && (us_platform_sigint_seen || us_platform_sigterm_seen) ) {
                     us_log_info("triggering adp depart");
                     shutdown_started_time = cur_time;
                     jdksavdecc_adp_manager_trigger_send_departing(&advertiser);
