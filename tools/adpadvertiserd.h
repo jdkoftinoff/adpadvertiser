@@ -31,7 +31,7 @@
 
 #pragma once
 
-#include "adpadvertise.h"
+#include "jdksavdecc_adp_manager.h"
 #include "us_rawnet_multi.h"
 #include "us_allocator.h"
 #include "us_getopt.h"
@@ -55,7 +55,7 @@ void adpadvertiserd_message_readable(
         ssize_t len );
 
 void adpadvertiserd_frame_send(
-    struct adpadvertiser *self,
+    struct jdksavdecc_adp_manager *self,
     void *context,
     uint8_t const *buf,
     uint16_t len );
@@ -81,7 +81,7 @@ void adpadvertiserd_initialize_entity_info(
     struct jdksavdecc_adpdu *adpdu );
 
 void adpadvertiserd_receive_entity_available_or_departing(
-    struct adpadvertiser *self,
+    struct jdksavdecc_adp_manager *self,
     void *context,
     struct jdksavdecc_adpdu *adpdu );
     

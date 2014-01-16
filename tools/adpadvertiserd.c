@@ -32,7 +32,7 @@
 #include "adpadvertiserd.h"
 
 us_rawnet_multi_t rawnet;
-struct adpadvertiser advertiser;
+struct jdksavdecc_adp_manager advertiser;
 us_socket_collection_t udp_sockets;
 us_socket_collection_t rawnet_sockets;
 us_socket_collection_group_t sockets;
@@ -110,7 +110,7 @@ void adpadvertiserd_message_readable(
         uint8_t const *buf,
         ssize_t len ) {
 
-    struct adpadvertiser *adv = (struct adpadvertiser *)self->user_context;
+    struct jdksavdecc_adp_manager *adv = (struct jdksavdecc_adp_manager *)self->user_context;
     (void)context;
     (void)fd;
     if( len>0 ) {
@@ -121,7 +121,7 @@ void adpadvertiserd_message_readable(
                 adpadvertiserd_last_received_from_addr_len = from_addrlen;
             }
 
-            adpadvertiser_receive(
+            jdksavdecc_adp_manager_receive(
                 adv,
                 current_time_in_milliseconds,
                 buf,
@@ -132,7 +132,7 @@ void adpadvertiserd_message_readable(
 }
 
 void adpadvertiserd_frame_send(
-    struct adpadvertiser *self,
+    struct jdksavdecc_adp_manager *self,
     void *context,
     uint8_t const *buf,
     uint16_t len ) {
@@ -165,19 +165,19 @@ void adpadvertiserd_initialize_udp_sockets_on_port(
     const char *port_name,
     struct sockaddr *addr ) {
 
-    const char *multicast_addr = ADPADVERTISER_MDNS_MULTICAST_IPV4;
+    const char *multicast_addr = JDKSAVDECC_ADP_MANAGER_MDNS_MULTICAST_IPV4;
     const char *local_addr = "0";
     if( addr->sa_family == AF_INET6 ) {
-        multicast_addr = ADPADVERTISER_MDNS_MULTICAST_IPV6;
+        multicast_addr = JDKSAVDECC_ADP_MANAGER_MDNS_MULTICAST_IPV6;
         local_addr = "0::0";
     }
 
     us_socket_collection_add_multicast_udp(
         self,
-        local_addr, ADPADVERTISER_AVDECC_UDP_PORT,       // The address and port to listen on
-        multicast_addr, ADPADVERTISER_AVDECC_UDP_PORT,   // The multicast group to join
+        local_addr, JDKSAVDECC_ADP_MANAGER_AVDECC_UDP_PORT,       // The address and port to listen on
+        multicast_addr, JDKSAVDECC_ADP_MANAGER_AVDECC_UDP_PORT,   // The multicast group to join
         port_name,                                       // the ethernet device to use
-        us_net_get_addrinfo(multicast_addr, ADPADVERTISER_AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
+        us_net_get_addrinfo(multicast_addr, JDKSAVDECC_ADP_MANAGER_AVDECC_UDP_PORT, SOCK_DGRAM, false ) // The default address to send to
         );
 }
 
@@ -277,7 +277,7 @@ void adpadvertiserd_initialize_entity_info( struct jdksavdecc_adpdu *adpdu ) {
 }
 
 void adpadvertiserd_receive_entity_available_or_departing(
-    struct adpadvertiser *self,
+    struct jdksavdecc_adp_manager *self,
     void *context,
     struct jdksavdecc_adpdu *adpdu ) {
 
@@ -351,7 +351,7 @@ int main( int argc, const char **argv ) {
         us_daemon_daemonize(option_daemon, "adpadvertiserd", 0, 0, 0);
 #endif
         // initialize the adp advertiser
-        if( adpadvertiser_init(
+        if( jdksavdecc_adp_manager_init(
                 &advertiser,
                 0,
                 adpadvertiserd_frame_send,
@@ -368,12 +368,12 @@ int main( int argc, const char **argv ) {
 
             // if we are to log other entity messages, then trigger the send of a discover message to everyone
             if( option_discover ) {
-                adpadvertiser_trigger_send_discover(&advertiser);
+                jdksavdecc_adp_manager_trigger_send_discover(&advertiser);
             }
 
             // if we are to not advertise our entity then stop the advertiser
             if( !option_advertise ) {
-                adpadvertiser_stop( &advertiser );
+                jdksavdecc_adp_manager_stop( &advertiser );
             }
 
             // Loop while we have some sockets open to play with
@@ -388,7 +388,7 @@ int main( int argc, const char **argv ) {
                 }
 
                 // process the advertiser state machine
-                adpadvertiser_tick( &advertiser, (uint64_t)cur_time );
+                jdksavdecc_adp_manager_tick( &advertiser, (uint64_t)cur_time );
 
                 // process any socket tick functions
                 us_socket_collection_group_tick(&sockets,cur_time);
@@ -404,7 +404,7 @@ int main( int argc, const char **argv ) {
             }
 
             // destroy the advertiser
-            adpadvertiser_destroy(&advertiser);
+            jdksavdecc_adp_manager_destroy(&advertiser);
 
             // close and destroy all the socket collections and contained sockets
             us_socket_collection_group_destroy(&sockets);
