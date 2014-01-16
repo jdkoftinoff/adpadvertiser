@@ -93,6 +93,10 @@ void adpadvertiserd_message_readable(
         ssize_t len ) {
 
     struct adpadvertiser *adv = (struct adpadvertiser *)self->user_context;
+    (void)context;
+    (void)fd;
+    (void)from_addr;
+    (void)from_addrlen;
     if( len>0 ) {
         if( buf[0]==JDKSAVDECC_1722A_SUBTYPE_ADP ) {
             //us_log_debug("incoming ADP on socket %d, sa_family=%d", fd, (int)from_addr->sa_family );
@@ -112,8 +116,13 @@ void adpadvertiserd_frame_send(
     void *context,
     uint8_t const *buf,
     uint16_t len ) {
+
     int i;
     us_socket_collection_group_t *g = (us_socket_collection_group_t *)&sockets;
+    
+    (void)self;
+    (void)context;
+
     for ( i=0; i<g->num_collections; ++i ) {
         us_socket_collection_t *c = g->collection[i];
         int j;
@@ -155,9 +164,9 @@ bool adpadvertiserd_is_network_port_interesting( struct ifaddrs *port ) {
         (port->ifa_addr->sa_family == AF_INET
         || port->ifa_addr->sa_family == AF_INET6 ) ) {
 #if defined(__APPLE__)
-        if( port->ifa_name[0] =='e' && port->ifa_name[1] =='n' && isnumber(port->ifa_name[2]))
+        if( port->ifa_name[0] =='e' && port->ifa_name[1] =='n' && isdigit(port->ifa_name[2]))
 #elif defined(__linux__)
-        if( port->ifa_name[0] =='e' && port->ifa_name[1] =='t' && port->ifa_name[2]=='h' && isnumber(port->ifa_name[3]) )
+        if( port->ifa_name[0] =='e' && port->ifa_name[1] =='t' && port->ifa_name[2]=='h' && isdigit(port->ifa_name[3]) )
 #endif
         {
             r=true;
@@ -238,6 +247,10 @@ void adpadvertiserd_receive_entity_available_or_departing(
     struct adpadvertiser *self,
     void *context,
     struct jdksavdecc_adpdu *adpdu ) {
+
+    (void)self;
+    (void)context;
+
     if( option_log_others ) {
         const char *type = "Available";
         if( adpdu->header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING ) {
@@ -283,6 +296,8 @@ bool adpadvertiserd_process_options( const char **argv ) {
 }
 
 int main( int argc, const char **argv ) {
+
+    (void)argc;
     us_logger_stdio_start(stdout, stderr);
 
     if( adpadvertiserd_process_options(argv) ) {
