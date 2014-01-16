@@ -412,11 +412,13 @@ int main( int argc, const char **argv ) {
                 if( shutdown_started_time==0 && (us_platform_sigint_seen || us_platform_sigterm_seen) ) {
                     us_log_info("triggering adp depart");
                     shutdown_started_time = cur_time;
+                    us_platform_sigint_seen=0;
+                    us_platform_sigterm_seen=0;
                     jdksavdecc_adp_manager_trigger_send_departing(&advertiser);
                 }
 
                 // process the advertiser state machine
-                jdksavdecc_adp_manager_tick( &advertiser, (uint64_t)cur_time );
+                jdksavdecc_adp_manager_tick( &advertiser, cur_time );
 
                 // process any socket tick functions
                 us_socket_collection_group_tick(&sockets,cur_time);
