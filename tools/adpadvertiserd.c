@@ -37,6 +37,9 @@ us_socket_collection_t udp_sockets;
 us_socket_collection_t rawnet_sockets;
 us_socket_collection_group_t sockets;
 
+struct sockaddr_storage adpadvertiserd_last_received_from_addr;
+socklen_t adpadvertiserd_last_received_from_addr_len=0;
+
 uint8_t adpadvertiserd_first_mac_address[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
 
 bool option_help=false;
@@ -110,11 +113,13 @@ void adpadvertiserd_message_readable(
     struct adpadvertiser *adv = (struct adpadvertiser *)self->user_context;
     (void)context;
     (void)fd;
-    (void)from_addr;
-    (void)from_addrlen;
     if( len>0 ) {
         if( buf[0]==JDKSAVDECC_1722A_SUBTYPE_ADP ) {
             //us_log_debug("incoming ADP on socket %d, sa_family=%d", fd, (int)from_addr->sa_family );
+            if( from_addr && from_addrlen>0 ) {
+                memcpy( &adpadvertiserd_last_received_from_addr, from_addr, from_addrlen );
+                adpadvertiserd_last_received_from_addr_len = from_addrlen;
+            }
 
             adpadvertiser_receive(
                 adv,
@@ -279,14 +284,22 @@ void adpadvertiserd_receive_entity_available_or_departing(
     (void)self;
     (void)context;
     if( option_discover ) {
+        char hostbuf[512];
         const char *type = "Available";
         if( adpdu->header.message_type == JDKSAVDECC_ADP_MESSAGE_TYPE_ENTITY_DEPARTING ) {
             type="Departing";
         }
-        us_log_debug("Received %s index 0x%08lx for entity_id 0x%016llx",
-                  type,
-                  adpdu->available_index,
-                  jdksavdecc_eui64_convert_to_uint64(&adpdu->header.entity_id));
+
+        us_net_convert_sockaddr_to_string(
+                (struct sockaddr *)&adpadvertiserd_last_received_from_addr,
+                hostbuf,
+                sizeof(hostbuf));
+
+        us_log_info("From %s : Received %s index 0x%08lx for entity_id 0x%016llx",
+            hostbuf,
+            type,
+            adpdu->available_index,
+            jdksavdecc_eui64_convert_to_uint64(&adpdu->header.entity_id));
     }
 }
 
