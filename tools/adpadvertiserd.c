@@ -34,7 +34,7 @@
 us_rawnet_multi_t rawnet;
 struct jdksavdecc_adp_manager advertiser;
 us_socket_collection_t udp_sockets;
-us_socket_collection_t rawnet_sockets;
+us_socket_collection_rawnet_multi_t rawnet_sockets;
 us_socket_collection_group_t sockets;
 
 struct sockaddr_storage adpadvertiserd_last_received_from_addr;
@@ -158,7 +158,7 @@ void adpadvertiserd_frame_send(
     (void)context;
 
     us_socket_collection_group_t *g = (us_socket_collection_group_t *)&sockets;
-    
+
     (void)self;
     (void)context;
 
@@ -256,22 +256,24 @@ void adpadvertiserd_initialize_sockets(
 
     // Create the rawnet sockets collection and add all the sockets that the rawnet_multi found for us.
     if( option_avtp ) {
-        us_socket_collection_init_rawnet(&rawnet_sockets);
+        // open all the interfaces
         us_rawnet_multi_open(&rawnet,JDKSAVDECC_AVTP_ETHERTYPE,jdksavdecc_multicast_adp_acmp.value, 0);
+        // grab the first interface's MAC address
         if( rawnet.ethernet_port_count>0 ) {
             memcpy( adpadvertiserd_first_mac_address, rawnet.ethernet_ports[0].m_my_mac, 6 );
         }
 
-        rawnet_sockets.readable = adpadvertiserd_message_readable;
-        rawnet_sockets.user_context = &advertiser;
+        // initialize the rawnet_sockets socket collection of rawnet_multi sockets
+        us_socket_collection_init_rawnet_multi(&rawnet_sockets,&rawnet);
 
-        for( i=0; i<rawnet.ethernet_port_count; ++i ) {
-            us_rawnet_context_t *c = &rawnet.ethernet_ports[i];
-            us_socket_collection_add_rawnet(
-                &rawnet_sockets,
-                c);
-        }
-        us_socket_collection_group_add(self,&rawnet_sockets);
+        // register adpadvertiserd_message_readable to be called when a message is received
+        rawnet_sockets.base.readable = adpadvertiserd_message_readable;
+
+        // register the advertiser as the user_context for the socket collection
+        rawnet_sockets.base.user_context = &advertiser;
+
+        // add the rawnet_sockets to to collection group
+        us_socket_collection_group_add(self,&rawnet_sockets.base);
     }
 }
 
