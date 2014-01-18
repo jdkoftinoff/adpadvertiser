@@ -422,6 +422,9 @@ int main( int argc, const char **argv ) {
                 // process the advertiser state machine
                 jdksavdecc_adp_manager_tick( &advertiser, cur_time );
 
+                // manage the rawnet_multi routing table
+                us_rawnet_multi_route_cleanup( &rawnet, time(0) );
+
                 // process any socket tick functions
                 us_socket_collection_group_tick(&sockets,cur_time);
 
