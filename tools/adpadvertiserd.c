@@ -57,7 +57,7 @@ uint16_t option_syslog_default=0;
 uint16_t option_log_level=0;
 uint16_t option_log_level_default=US_LOG_LEVEL_INFO;
 uint16_t option_discover=0;
-uint16_t option_discover_default=0;
+uint16_t option_discover_default=1;
 uint16_t option_udp=0;
 uint16_t option_udp_default=0;
 uint16_t option_avtp=0;
@@ -236,8 +236,6 @@ void adpadvertiserd_initialize_udp_sockets_on_all_ports(
 
 void adpadvertiserd_initialize_sockets(
     us_socket_collection_group_t *self ) {
-
-    int i;
 
     // initialize the sockets on this platform
     us_platform_init_sockets();
